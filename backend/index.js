@@ -10,24 +10,21 @@ const PORT = process.env.PORT || 7000;
 // ---------- Middleware ----------
 app.use(cors({ origin: '*' }));
 app.use(express.json());
-// place AFTER app.use(express.json()) and BEFORE your routes
 app.use((req, _res, next) => {
-  // already path-based? skip
   if (req.path.startsWith('/cfg/')) return next();
 
-  // legacy resource? try to rewrite to path-based using the token we can extract
   if (/^\/(catalog|meta|stream)\//.test(req.path)) {
     const token = extractCfgFromReq(req);
     if (token) {
-      const hasQuery = req.url.includes('?');
-      // e.g. /catalog/series/youtube-user.json -> /cfg/<token>/catalog/series/youtube-user.json
-      const newUrl = `/cfg/${token}${req.path}${hasQuery ? '&' : '?'}__legacy=1`;
+      // Always rewrite to a clean path version; drop old query entirely.
+      const newUrl = `/cfg/${token}${req.path}`;
       console.log('[LEGACY → PATH]', req.url, '→', newUrl);
-      req.url = newUrl;  // internal rewrite; your path routes will handle it
+      req.url = newUrl;
     }
   }
   next();
 });
+
 
 // ---------- Health ----------
 app.get('/', (_req, res) => {
@@ -277,8 +274,9 @@ app.get('/cfg/:token/manifest.json', (req, res) => {
     if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
 
     const manifest = {
-      id: 'org.cary.youtube.universe',
-      version: '1.0.0',
+      id: 'ca.3hp.youtube.universe', // was 'org.cary.youtube.universe'
+version: '1.0.1',              // bump
+
       name: `YouTube Universe${cfg.lowQuota !== false ? ' • Low-quota' : ''}`,
       description: `User-configured YouTube catalog${cfg.lowQuota !== false ? ' • Low-quota mode (RSS)' : ''}`,
       catalogs: [
@@ -584,8 +582,9 @@ app.get('/manifest.json', (req, res) => {
   if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
 
   const manifest = {
-    id: 'org.cary.youtube.universe',
-    version: '1.0.0',
+    id: 'ca.3hp.youtube.universe', // was 'org.cary.youtube.universe'
+version: '1.0.1',              // bump
+
     name: `YouTube Universe${cfg.lowQuota !== false ? ' • Low-quota' : ''}`,
     description: `User-configured YouTube catalog${cfg.lowQuota !== false ? ' • Low-quota mode (RSS)' : ''}`,
     catalogs: [{ type: 'series', id: 'youtube-user', name: 'YouTube Channels', extra: [{ name: 'search', isRequired: false }] }],
