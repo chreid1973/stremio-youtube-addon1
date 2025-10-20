@@ -32,4 +32,7 @@ function App() {
   );
 }
 
-export default './App/index'
+export default function App() {
+  return <div>Ready.</div>;
+}
+
