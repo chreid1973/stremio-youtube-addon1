@@ -1,18 +1,18 @@
-// src/services/geminiService.ts
-// Minimal shim so builds never fail in static mode.
-// Replace with real Gemini calls later.
+// Minimal, build-safe shim. Replace with real Gemini code later.
 
 export async function summarize(text: string): Promise<string> {
-  // return a short placeholder summary
-  return `Summary: ${text.slice(0, 120)}${text.length > 120 ? '…' : ''}`;
+  return `Summary: ${text.slice(0, 100)}${text.length > 100 ? '…' : ''}`;
 }
 
-export async function suggestTags(input: string): Promise<string[]> {
-  // naive tagger: split words and de-dupe a bit
-  const words = input.toLowerCase().match(/[a-z0-9@#]+/g) || [];
-  const uniq = Array.from(new Set(words)).slice(0, 5);
-  return uniq;
+// Alias to satisfy ChannelCard's named import
+export async function getSummary(text: string): Promise<string> {
+  return summarize(text);
 }
 
-// If ChannelCard imports default:
-export default { summarize, suggestTags };
+export async function analyzeChannel(name: string): Promise<string> {
+  return `Analysis of ${name} coming soon.`;
+}
+
+// Optional default export (covers any default-style imports elsewhere)
+export default { summarize, getSummary, analyzeChannel };
+
