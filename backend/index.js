@@ -233,23 +233,37 @@ function buildAddon({ channels = [], lowQuota = true }) {
 
   // Catalog
   builder.defineCatalogHandler(async ({ type, id }) => {
-    if (type !== 'series' || id !== 'youtube-user') return { metas: [] };
+  if (type !== 'series' || id !== 'youtube-user') return { metas: [] };
 
-    const metas = await Promise.all(channels.map(async (raw) => {
-      const channelId = await ensureChannelId(raw);      // UC… or null
-      const safeKey   = channelId || toB64Url(raw);      // <-- no slashes!
-      const name      = raw.startsWith('@') ? raw : (channelId ? `Channel ${channelId.slice(0,8)}…` : raw);
-      return {
-        id: `ytc:${safeKey}`,
-        type: 'series',
-        name,
-        poster: 'https://i.imgur.com/PsWn3oM.png',
-        posterShape: 'square'
-      };
-    }));
+  const metas = [];
+  for (const raw of channels) {
+    const channelId = await ensureChannelId(raw);
+    const safeKey = channelId || toB64Url(raw);
 
-    return { metas };
-  });
+    let title = raw;
+    let thumb = 'https://i.imgur.com/PsWn3oM.png';
+
+    // Try to pull channel title & avatar from RSS
+    try {
+      const feed = await fetchChannelRSS(channelId);
+      title = feed?.feed?.title?.[0] || title;
+      thumb =
+        feed?.feed?.entry?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url ||
+        thumb;
+    } catch { /* ignore errors */ }
+
+    metas.push({
+      id: `ytc:${safeKey}`,
+      type: 'series',
+      name: title,
+      poster: thumb,
+      posterShape: 'square',
+    });
+  }
+
+  return { metas };
+});
+
 
   // Meta
   builder.defineMetaHandler(async ({ id }) => {
@@ -289,14 +303,20 @@ function buildAddon({ channels = [], lowQuota = true }) {
   });
 
   // Stream stays the same
-  builder.defineStreamHandler(async ({ id }) => {
-    if (!id.startsWith('ytv:')) return { streams: [] };
-    const videoId = id.slice(4);
-    return { streams: [{ title: 'Watch on YouTube', url: `https://www.youtube.com/watch?v=${videoId}` }] };
-  });
+ builder.defineStreamHandler(async ({ id }) => {
+  if (!id.startsWith('ytv:')) return { streams: [] };
+  const videoId = id.slice(4);
+  return {
+    streams: [
+      {
+        name: 'YouTube',
+        title: 'Open on YouTube',
+        externalUrl: `https://www.youtube.com/watch?v=${videoId}`
+      }
+    ]
+  };
+});
 
-  return builder.getInterface();
-}
 
 
 // Manifest
