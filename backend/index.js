@@ -203,7 +203,7 @@ async function ensureChannelId(raw) {
 
 function buildAddon({ channels = [], lowQuota = true }) {
   const manifest = {
-    id: 'org.cary.youtube.universe',
+    id: 'org.3holepunchmedia.youtube.universe',
     version: '1.0.0',
     name: `YouTube Universe${lowQuota ? ' • Low-quota' : ''}`,
     description: `User-configured YouTube catalog${lowQuota ? ' • Low-quota mode (RSS)' : ''}`,
@@ -270,10 +270,22 @@ function buildAddon({ channels = [], lowQuota = true }) {
 app.get('/manifest.json', (req, res) => {
   const token = String(req.query.cfg || '');
   const cfg = token ? decodeCfg(token) : null;
-  if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
+  if (!cfg) {
+    console.warn('manifest: invalid cfg', token.slice(0, 24));
+    return res.status(400).json({ error: 'invalid cfg' });
+  }
   const addon = buildAddon(cfg);
-  res.json(addon.manifest);
+  // Be explicit: some proxies misbehave with res.json + compression
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  res.set('Cache-Control', 'no-store');
+  res.send(JSON.stringify(addon.manifest));
 });
+app.get('/_cfg_debug', (req, res) => {
+  const token = String(req.query.cfg || '');
+  const cfg = token ? decodeCfg(token) : null;
+  res.json({ ok: !!cfg, cfg, tokenPreview: token.slice(0, 24) });
+});
+
 
 // Generic Stremio router
 app.get('/:resource/:type/:id.json', async (req, res) => {
