@@ -9,6 +9,10 @@ export default function App() {
   const { channels, addChannel, removeChannel, loading, error } = useChannels();
   const [query, setQuery] = useState('');
   const { results: suggestions, loading: sugLoading } = useSuggestions(query);
+  // new: addon build state
+const [install, setInstall] = useState<{manifest?: string; web?: string; token?: string}>({});
+const [building, setBuilding] = useState(false);
+
 
   async function handleAdd() {
     const input = query.trim();
@@ -43,6 +47,8 @@ export default function App() {
               {loading ? 'Adding…' : 'Add'}
             </button>
           </div>
+
+          
 
           {/* Suggestions dropdown */}
           {query.trim() !== '' && suggestions.length > 0 && (
@@ -81,6 +87,58 @@ export default function App() {
 
           {error && <p className="text-red-600 text-sm mt-2">{error}</p>}
         </div>
+{/* Build Stremio addon */}
+<div className="bg-white shadow rounded p-4 mb-6">
+  <div className="flex items-center justify-between gap-4">
+    <div>
+      <p className="font-medium">Create your Stremio add-on</p>
+      <p className="text-sm text-gray-600">
+        Uses your current channel list ({channels.length}).
+      </p>
+    </div>
+    <button
+      disabled={building || channels.length === 0}
+      onClick={async () => {
+        try {
+          setBuilding(true);
+          // Send “raw” identifiers—backend can resolve UC ids, @handles, or URLs.
+          const raw = channels.map(c => (/^UC[0-9A-Za-z_-]{20,}$/.test(c.id) ? c.id : (c.url || c.name)));
+          const res = await createAddonConfig(raw, true); // RSS low-quota
+          setInstall({ manifest: res.manifest_url, web: res.web_stremio_install, token: res.token });
+          // Optional: auto-open Web Stremio in a new tab:
+          // window.open(res.web_stremio_install, '_blank', 'noopener,noreferrer');
+        } catch (e: any) {
+          alert(e.message || 'Failed to build add-on');
+        } finally {
+          setBuilding(false);
+        }
+      }}
+      className="bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white font-semibold px-4 py-2 rounded"
+    >
+      {building ? 'Building…' : 'Add to Stremio'}
+    </button>
+  </div>
+
+  {install.web && (
+    <div className="mt-4 space-y-2">
+      <div className="text-sm">
+        <span className="font-semibold">Web Stremio:</span>{' '}
+        <a href={install.web} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline break-all">
+          Open in Web Stremio
+        </a>
+      </div>
+      <div className="text-sm">
+        <span className="font-semibold">Manifest URL:</span>{' '}
+        <a href={install.manifest} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline break-all">
+          {install.manifest}
+        </a>
+      </div>
+      <div className="text-xs text-gray-500">
+        Token: <code className="break-all">{install.token}</code>
+      </div>
+    </div>
+  )}
+</div>
 
         {/* List */}
         {channels.length === 0 ? (
