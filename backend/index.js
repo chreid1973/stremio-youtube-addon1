@@ -304,84 +304,67 @@ app.get('/cfg/:token/catalog/:type/:id.json', async (req, res) => {
   }
 });
 
-// META: /cfg/<token>/meta/<any-type>/ytc:<UC...|b64>.json
+// META: accept ytc:<UC|b64>, bare UC, or b64(raw). Type is ignored.
 app.get('/cfg/:token/meta/:type/:id.json', async (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
   if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
 
-  // Be permissive about :type and robust about the id
   let rawId = String(req.params.id || '');
-  try {
-    // sometimes ids arrive url-encoded already in some skins
-    rawId = decodeURIComponent(rawId);
-  } catch {}
+  try { rawId = decodeURIComponent(rawId); } catch {}
 
-  if (!rawId.startsWith('ytc:')) {
-    // don’t hard-fail — return empty meta but with a name so UI shows something
-    return res.json({ meta: { id: rawId, type: 'series', name: 'Unknown channel', videos: [] } });
+  // Normalize to a resolvable key
+  let key = rawId.startsWith('ytc:') ? rawId.slice(4) : rawId;
+
+  // UC directly? keep it. Otherwise try b64 → UC → handle/url resolve
+  if (!/^UC[0-9A-Za-z_-]{20,}$/.test(key)) {
+    try { key = fromB64Url(key); } catch {}
+  }
+  let channelId = /^UC[0-9A-Za-z_-]{20,}$/.test(key) ? key : await ensureChannelId(key);
+
+  // Always return *some* meta so Stremio never sees {}
+  let title = `Channel ${channelId || key}`;
+  let poster = 'https://i.imgur.com/PsWn3oM.png';
+  let videos = [];
+
+  // Try avatar/title from profile
+  if (channelId) {
+    const prof = await fetchChannelProfile(channelId);
+    if (prof?.title)  title  = prof.title;
+    if (prof?.avatar) poster = prof.avatar;
   }
 
-  try {
-    // UC… or b64url(raw)
-    let key = rawId.slice(4);
-    if (!/^UC/.test(key)) {
-      try { key = fromB64Url(key); } catch {}
-    }
-    const channelId = /^UC/.test(key) ? key : await ensureChannelId(key);
-
-    // sensible defaults so UI never sees {}
-    let title = `Channel ${channelId || key}`;
-    let poster = 'https://i.imgur.com/PsWn3oM.png';
-    let videos = [];
-
-    // fetch avatar/title if we can
-    if (channelId) {
-      const prof = await fetchChannelProfile(channelId);
-      if (prof?.title)  title  = prof.title;
-      if (prof?.avatar) poster = prof.avatar;
-    }
-
-    // RSS videos (low-quota path)
-    if (cfg.lowQuota !== false && channelId) {
-      try {
-        const feed = await fetchChannelRSS(channelId);
-        title = feed?.feed?.title?.[0] || title;
-
-        const entries = feed?.feed?.entry || [];
-        videos = entries.map(e => {
-          const thumb = e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url;
-          return {
-            id: `ytv:${e['yt:videoId']?.[0]}`,
-            type: 'movie',
-            name: e.title?.[0] || 'Video',
-            releaseInfo: e.published?.[0]?.slice(0, 10),
-            poster: thumb,
-            thumbnail: thumb,
-            background: thumb
-          };
-        }).filter(v => v.id);
-
-        // fallback poster from newest video if no avatar
-        if (!/^https?:\/\//.test(poster) && entries[0]) {
-          poster = entries[0]['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url || poster;
-        }
-      } catch (e) {
-        console.error('meta: rss fetch failed for', channelId, e);
+  // Low-quota RSS videos
+  if (cfg.lowQuota !== false && channelId) {
+    try {
+      const feed = await fetchChannelRSS(channelId);
+      title = feed?.feed?.title?.[0] || title;
+      const entries = feed?.feed?.entry || [];
+      videos = entries.map(e => {
+        const t = e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url;
+        return {
+          id: `ytv:${e['yt:videoId']?.[0]}`,
+          type: 'movie',
+          name: e.title?.[0] || 'Video',
+          releaseInfo: e.published?.[0]?.slice(0, 10),
+          poster: t,
+          thumbnail: t,
+          background: t
+        };
+      }).filter(v => v.id);
+      if (poster === 'https://i.imgur.com/PsWn3oM.png' && entries[0]) {
+        poster = entries[0]['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url || poster;
       }
+    } catch (e) {
+      console.error('meta: rss fetch failed for', channelId, e);
     }
-
-    const links = channelId ? [{ name: 'Channel on YouTube', url: `https://www.youtube.com/channel/${channelId}` }] : [];
-
-    res.set('Content-Type', 'application/json; charset=utf-8');
-    return res.json({
-      meta: { id: rawId, type: 'series', name: title, poster, videos, links }
-    });
-  } catch (e) {
-    console.error('meta error:', e);
-    // still return a meta object so UI doesn’t show “No metadata”
-    return res.json({ meta: { id: rawId, type: 'series', name: 'Unavailable', videos: [] } });
   }
+
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  return res.json({
+    meta: { id: rawId.startsWith('ytc:') ? rawId : `ytc:${channelId || key}`, type: 'series', name: title, poster, videos,
+            links: channelId ? [{ name: 'Channel on YouTube', url: `https://www.youtube.com/channel/${channelId}` }] : [] }
+  });
 });
 
 // STREAM: /cfg/<token>/stream/<any-type>/ytv:<videoId>.json
