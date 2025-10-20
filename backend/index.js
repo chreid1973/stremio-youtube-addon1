@@ -201,15 +201,34 @@ function buildAddon({ channels = [], lowQuota = true }) {
 
 // ---------- Manifest (path-based) ----------
 app.get('/cfg/:token/manifest.json', (req, res) => {
-  const token = String(req.params.token || '');
-  const cfg = token ? decodeCfg(token) : null;
-  if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
+  try {
+    const token = String(req.params.token || '');
+    const cfg = token ? decodeCfg(token) : null;
+    if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
 
-  const addon = buildAddon(cfg);
-  res.set('Content-Type', 'application/json; charset=utf-8');
-  res.set('Cache-Control', 'no-store');
-  res.send(JSON.stringify(addon.manifest));
+    // Build manifest directly (no addonBuilder)
+    const manifest = {
+      id: 'org.cary.youtube.universe',
+      version: '1.0.0',
+      name: `YouTube Universe${cfg.lowQuota !== false ? ' • Low-quota' : ''}`,
+      description: `User-configured YouTube catalog${cfg.lowQuota !== false ? ' • Low-quota mode (RSS)' : ''}`,
+      catalogs: [
+        { type: 'series', id: 'youtube-user', name: 'YouTube Channels', extra: [{ name: 'search', isRequired: false }] }
+      ],
+      resources: ['catalog', 'meta', 'stream'],
+      types: ['series', 'movie'],
+      idPrefixes: ['ytc:', 'ytv:']
+    };
+
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    res.set('Cache-Control', 'no-store');
+    res.send(JSON.stringify(manifest));
+  } catch (e) {
+    console.error('manifest route error:', e && (e.stack || e.message || e));
+    res.status(500).json({ error: 'handler_error', detail: e && (e.stack || e.message || String(e)) });
+  }
 });
+
 
 // ---------- Explicit resource routes (no SDK HTTP delegation) ----------
 // CATALOG
