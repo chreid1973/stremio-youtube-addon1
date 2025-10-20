@@ -18,6 +18,47 @@ app.get('/', (_req, res) => {
 });
 
 // ---------- Helpers ----------
+// --- Add this helper ---
+async function searchChannels(query) {
+  // Filter to channels: sp=EgIQAg%3D%3D
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQAg%253D%253D`;
+  const html = await axios.get(url, {
+    timeout: 12000,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Cookie': 'PREF=hl=en' // normalize markup to English
+    }
+  }).then(r => r.data);
+
+  // Try both shapes for ytInitialData
+  let m = html.match(/ytInitialData"\s*:\s*(\{.+?\})\s*[,<]/s);
+  if (!m) m = html.match(/var\s+ytInitialData\s*=\s*(\{.+?\})\s*;/s);
+  if (!m) return [];
+
+  let data;
+  try { data = JSON.parse(m[1]); } catch { return []; }
+
+  const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
+  const results = [];
+  for (const sec of sections) {
+    const items = sec?.itemSectionRenderer?.contents || [];
+    for (const item of items) {
+      const ch = item?.channelRenderer;
+      if (!ch) continue;
+      const channelId = ch.channelId;
+      const title = ch.title?.simpleText || ch.title?.runs?.[0]?.text;
+      const thumb = ch.thumbnail?.thumbnails?.slice(-1)?.[0]?.url;
+      const subs = ch.subscriberCountText?.simpleText || (ch.subscriberCountText?.runs || []).map(r => r.text).join('') || '';
+      const desc = (ch.descriptionSnippet?.runs || []).map(r => r.text).join('') || '';
+      if (channelId && title) {
+        results.push({ channelId, title, thumbnail: thumb, subscribers: subs, description: desc });
+      }
+    }
+  }
+  return results;
+}
+
 async function searchChannels(query) {
   // Filter to channels: sp=EgIQAg%3D%3D
   const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQAg%253D%253D`;
