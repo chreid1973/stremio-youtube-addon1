@@ -229,18 +229,22 @@ async function ensureChannelId(raw) {
 }
 
 function buildAddon({ channels = [], lowQuota = true }) {
-  const manifest = {
-    id: 'org.cary.youtube.universe',
-    version: '1.0.0',
-    name: `YouTube Universe${lowQuota ? ' • Low-quota' : ''}`,
-    description: `User-configured YouTube catalog${lowQuota ? ' • Low-quota mode (RSS)' : ''}`,
-    catalogs: [
-      { type: 'series', id: 'youtube-user', name: 'YouTube Channels', extra: [{ name: 'search', isRequired: false }] }
-    ],
-    resources: ['catalog', 'meta', 'stream'],
-    types: ['series', 'movie'],
-    idPrefixes: ['ytc:', 'ytv:']
+  return {
+    manifest: {
+      id: 'org.cary.youtube.universe',
+      version: '1.0.0',
+      name: `YouTube Universe${lowQuota ? ' • Low-quota' : ''}`,
+      description: `User-configured YouTube catalog${lowQuota ? ' • Low-quota mode (RSS)' : ''}`,
+      catalogs: [
+        { type: 'series', id: 'youtube-user', name: 'YouTube Channels', extra: [{ name: 'search', isRequired: false }] }
+      ],
+      resources: ['catalog', 'meta', 'stream'],
+      types: ['series', 'movie'],
+      idPrefixes: ['ytc:', 'ytv:']
+    }
   };
+}
+
 
   const builder = new addonBuilder(manifest);
 
