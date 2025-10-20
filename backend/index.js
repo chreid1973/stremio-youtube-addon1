@@ -95,6 +95,49 @@ async function searchChannels(query) {
   }
   return results;
 }
+// --- near other helpers ---
+const profileCache = new Map(); // UCid -> { title, avatar }
+
+async function fetchChannelProfile(channelId) {
+  if (!channelId) return null;
+  if (profileCache.has(channelId)) return profileCache.get(channelId);
+
+  try {
+    const url = `https://www.youtube.com/channel/${channelId}`;
+    const html = await axios.get(url, {
+      timeout: 12000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cookie': 'PREF=hl=en'
+      }
+    }).then(r => r.data);
+
+    // Try og:image (avatar) and og:title
+    const ogImg = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i)?.[1];
+    const ogTitle = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i)?.[1];
+
+    // Fallback to ytInitialData avatar thumbnails
+    let avatar = ogImg || null;
+    if (!avatar) {
+      let m = html.match(/ytInitialData"\s*:\s*(\{.+?\})\s*[,<]/s) ||
+              html.match(/var\s+ytInitialData\s*=\s*(\{.+?\})\s*;/s);
+      if (m) {
+        try {
+          const data = JSON.parse(m[1]);
+          const thumbs = data?.header?.c4TabbedHeaderRenderer?.avatar?.thumbnails;
+          avatar = thumbs?.slice(-1)?.[0]?.url || null;
+        } catch {}
+      }
+    }
+
+    const out = { title: ogTitle || `Channel ${channelId.slice(0,8)}…`, avatar };
+    profileCache.set(channelId, out);
+    return out;
+  } catch {
+    return null;
+  }
+}
 
 // ---------- Frontend helper API ----------
 app.get('/suggest', async (req, res) => {
@@ -245,6 +288,32 @@ app.get('/cfg/:token/catalog/:type/:id.json', async (req, res) => {
       try {
         const channelId = await ensureChannelId(raw);
         const safeKey = channelId || toB64Url(raw);
+// inside catalog handler loop after you compute channelId & safeKey
+let title = String(raw).startsWith('@') ? raw : `Channel ${channelId?.slice(0,8) ?? String(raw).slice(0,8)}…`;
+let poster = 'https://i.imgur.com/PsWn3oM.png';
+
+// Try profile page first (avatar + proper channel title)
+if (channelId) {
+  const prof = await fetchChannelProfile(channelId);
+  if (prof?.title)  title  = prof.title;
+  if (prof?.avatar) poster = prof.avatar;
+}
+
+// Optional: fallback to RSS thumbnail if no avatar found
+if (!poster && channelId) {
+  try {
+    const feed = await fetchChannelRSS(channelId);
+    poster = feed?.feed?.entry?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url || poster;
+  } catch {}
+}
+
+metas.push({
+  id: `ytc:${safeKey}`,
+  type: 'series',
+  name: title,
+  poster,
+  posterShape: 'square'
+});
 
         // Try to get a friendly name & thumbnail from RSS
         let title = String(raw);
