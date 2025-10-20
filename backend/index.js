@@ -322,25 +322,37 @@ app.get('/cfg/:token/meta/:type/:id.json', async (req, res) => {
   }
 });
 
-// STREAM
+// STREAM: /cfg/<token>/stream/<any-type>/ytv:<videoId>.json
 app.get('/cfg/:token/stream/:type/:id.json', (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
   if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
 
-  const { type } = req.params;
   const id = String(req.params.id || '');
-  if (type !== 'movie' || !id.startsWith('ytv:')) return res.json({ streams: [] });
+  if (!id.startsWith('ytv:')) return res.json({ streams: [] });
 
   const videoId = id.slice(4);
-  const streams = videoId ? [
-    // Open in browser (lightweight, ToS-friendly)
-    { name: 'YouTube', title: 'Open on YouTube', externalUrl: `https://www.youtube.com/watch?v=${videoId}` }
-  ] : [];
+  if (!videoId) return res.json({ streams: [] });
+
+  const link = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+
+  const streams = [
+    {
+      name: 'YouTube',
+      title: 'Open on YouTube',
+      externalUrl: link,
+      // these hints make Stremio show a clickable external link instead of “search”
+      behaviorHints: {
+        openExternal: true,
+        notWebReady: true
+      }
+    }
+  ];
 
   res.set('Content-Type', 'application/json; charset=utf-8');
   res.json({ streams });
 });
+
 
 // ---------- Optional debug ----------
 app.get('/manifest.json', (req, res) => {
