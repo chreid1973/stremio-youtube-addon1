@@ -1,5 +1,6 @@
 // frontend/src/types.ts
 
+// Base shape your UI uses everywhere
 export type Channel = {
   id: string;
   type: 'youtube' | 'github' | 'custom';
@@ -11,7 +12,11 @@ export type Channel = {
   videoCount?: number | string;
 };
 
-// If you ever use GitHub repos in UI:
+// What ChannelCard was expecting to import (provide aliases)
+export type YouTubeChannel = Channel & { type: 'youtube' };
+export type GitHubRepo   = Channel & { type: 'github'; stars?: number };
+
+// Minimal details returned by githubService (internal to hooks/services)
 export type RepoDetails = {
   owner?: string;
   name?: string;
@@ -19,3 +24,4 @@ export type RepoDetails = {
   stars?: number;
   url?: string;
 };
+
