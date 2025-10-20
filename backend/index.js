@@ -110,19 +110,48 @@ async function fetchChannelRSS(channelId) {
 
 // GET /resolve?input=<url|@handle|UCid>
 // returns { channelId, title, thumbnail? }
+// Suggest channels for any freeform text (name, host, handle, etc.)
+app.get('/suggest', async (req, res) => {
+  const q = String(req.query.query || '').trim();
+  if (!q) return res.status(400).json({ error: 'missing query' });
+  try {
+    const hits = await searchChannels(q);
+    // keep top 8
+    res.json({ query: q, suggestions: hits.slice(0, 8) });
+  } catch (e) {
+    res.status(502).json({ error: 'search_failed' });
+  }
+});
+
 app.get('/resolve', async (req, res) => {
   const input = String(req.query.input || '');
   if (!input) return res.status(400).json({ error: 'missing input' });
 
+  // Direct resolve first
   const channelId = await resolveChannelId(input);
-  if (!channelId) return res.status(404).json({ error: 'channel not found' });
+  if (channelId) {
+    try {
+      const feed = await fetchChannelRSS(channelId);
+      const title = feed?.feed?.title?.[0] || `Channel ${channelId.slice(0,8)}…`;
+      const firstThumb = feed?.feed?.entry?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url;
+      return res.json({ channelId, title, thumbnail: firstThumb });
+    } catch {
+      return res.json({ channelId, title: `Channel ${channelId.slice(0,8)}…` });
+    }
+  }
 
-  let title = `Channel ${channelId.slice(0,8)}…`;
-  let thumbnail;
-
+  // Fall back: treat input as a name and search
   try {
-    const feed = await fetchChannelRSS(channelId);
-    title = feed?.feed?.title?.[0] || title;
+    const hits = await searchChannels(input);
+    if (hits.length) {
+      // don’t auto-pick; tell frontend to show suggestions
+      return res.status(404).json({ error: 'ambiguous', suggestions: hits.slice(0, 8) });
+    }
+  } catch {}
+
+  return res.status(404).json({ error: 'channel not found' });
+});
+
 
     // Try to construct a thumbnail from the first entry
     const firstThumb = feed?.feed?.entry?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url;
