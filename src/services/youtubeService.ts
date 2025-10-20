@@ -59,4 +59,9 @@ export const fetchYouTubeChannel = async (url: string): Promise<YouTubeChannel> 
         subscriberCount: statistics.subscriberCount,
         videoCount: statistics.videoCount,
     };
+    // Keep existing exports above...
+
+export const getChannelDetails = fetchYouTubeChannel; // alias for callers expecting this name
+export default { fetchYouTubeChannel, getChannelDetails };
 };
+
