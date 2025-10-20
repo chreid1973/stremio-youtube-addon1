@@ -184,15 +184,25 @@ app.post('/create-config', (req, res) => {
     channels: Array.isArray(body.channels) ? body.channels.slice(0, 100) : [],
     lowQuota: body.lowQuota !== undefined ? !!body.lowQuota : true
   };
+
   const token = encodeCfg(cfg);
-  const base = publicBaseUrl(req);
+  const base  = publicBaseUrl(req);
 
-  // path-based so the token survives all addon calls
+  // Path-based manifest so the token survives all addon calls
   const manifest = `${base}/cfg/${token}/manifest.json`;
-  const webStremio = `https://web.strem.io/#/addons/catalog?addonUrl=${encodeURIComponent(manifest)}`;
 
-  res.json({ token, manifest_url: manifest, web_stremio_install: webStremio });
+  // ✅ Correct installer links
+  const webStremio   = `https://web.stremio.com/#/addons?addon=${encodeURIComponent(manifest)}`;
+  const desktopDeep  = `stremio://${manifest}`;
+
+  res.json({
+    token,
+    manifest_url: manifest,
+    web_stremio_install: webStremio,
+    desktop_stremio_install: desktopDeep
+  });
 });
+
 
 
 // ---------- Stremio Addon (multi-tenant via cfg token) ----------
