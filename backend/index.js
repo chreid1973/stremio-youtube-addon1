@@ -234,13 +234,55 @@ function buildAddon({ channels = [], lowQuota = true }) {
     version: '1.0.0',
     name: `YouTube Universe${lowQuota ? ' • Low-quota' : ''}`,
     description: `User-configured YouTube catalog${lowQuota ? ' • Low-quota mode (RSS)' : ''}`,
-    catalogs: [{ type: 'series', id: 'youtube-user', name: 'YouTube Channels', extra: [{ name: 'search', isRequired: false }] }],
+    catalogs: [
+      { type: 'series', id: 'youtube-user', name: 'YouTube Channels', extra: [{ name: 'search', isRequired: false }] }
+    ],
     resources: ['catalog', 'meta', 'stream'],
     types: ['series', 'movie'],
     idPrefixes: ['ytc:', 'ytv:']
   };
-  return new addonBuilder(manifest).getInterface();
+
+  const builder = new addonBuilder(manifest);
+
+  // 🔽 THIS PART replaces your old catalog handler
+  builder.defineCatalogHandler(async ({ type, id }) => {
+    if (type !== 'series' || id !== 'youtube-user') return { metas: [] };
+
+    const metas = await Promise.all(
+      channels.map(async (raw) => {
+        const channelId = await ensureChannelId(raw);
+        const safeKey = channelId || toB64Url(raw);
+
+        // ✅ clean, collision-free channel name
+        const name =
+          raw.startsWith('@')
+            ? raw
+            : channelId
+            ? `Channel ${channelId.slice(0, 8)}…`
+            : raw;
+
+        // ✅ optional: use fetched avatar as poster later
+        return {
+          id: `ytc:${safeKey}`,
+          type: 'series',
+          name, // ← this replaces title
+          poster: 'https://i.imgur.com/PsWn3oM.png',
+          posterShape: 'square',
+        };
+      })
+    );
+
+    return { metas };
+  });
+  // 🔼 END of new catalog handler
+
+  // Keep the rest — your metaHandler and streamHandler go here
+  builder.defineMetaHandler(...);
+  builder.defineStreamHandler(...);
+
+  return builder.getInterface();
 }
+
 
 // ---------- Manifest (path-based) ----------
 app.get('/cfg/:token/manifest.json', (req, res) => {
