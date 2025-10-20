@@ -18,6 +18,47 @@ app.get('/', (_req, res) => {
 });
 
 // ---------- Helpers ----------
+async function searchChannels(query) {
+  // Filter to channels: sp=EgIQAg%3D%3D
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQAg%253D%253D`;
+  const html = await axios.get(url, { timeout: 10000 }).then(r => r.data);
+
+  // Grab ytInitialData JSON
+  const m = html.match(/ytInitialData"\s*:\s*(\{.+?\})\s*[,<]/s);
+  if (!m) return [];
+
+  let data;
+  try { data = JSON.parse(m[1]); } catch { return []; }
+
+  // Walk the structure to find channel renderers
+  const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
+  const results = [];
+
+  for (const sec of sections) {
+    const items = sec?.itemSectionRenderer?.contents || [];
+    for (const item of items) {
+      const ch = item?.channelRenderer;
+      if (!ch) continue;
+      const channelId = ch?.channelId;
+      const title = ch?.title?.simpleText || ch?.title?.runs?.[0]?.text;
+      const thumb = ch?.thumbnail?.thumbnails?.slice(-1)?.[0]?.url;
+      const subs = ch?.subscriberCountText?.simpleText || ch?.subscriberCountText?.runs?.map(r => r.text).join('') || '';
+      const desc = ch?.descriptionSnippet?.runs?.map(r => r.text).join('') || '';
+
+      if (channelId && title) {
+        results.push({
+          channelId,
+          title,
+          thumbnail: thumb,
+          subscribers: subs,
+          description: desc
+        });
+      }
+    }
+  }
+  return results;
+}
+
 function toB64Url(str) {
   return Buffer.from(str, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/,'');
 }
