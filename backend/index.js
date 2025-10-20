@@ -177,6 +177,7 @@ function publicBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
+// backend/index.js
 app.post('/create-config', (req, res) => {
   const body = req.body || {};
   const cfg = {
@@ -185,11 +186,14 @@ app.post('/create-config', (req, res) => {
   };
   const token = encodeCfg(cfg);
   const base = publicBaseUrl(req);
-  const manifest = `${base}/manifest.json?cfg=${token}`;
+
+  // path-based so the token survives all addon calls
+  const manifest = `${base}/cfg/${token}/manifest.json`;
   const webStremio = `https://web.strem.io/#/addons/catalog?addonUrl=${encodeURIComponent(manifest)}`;
 
   res.json({ token, manifest_url: manifest, web_stremio_install: webStremio });
 });
+
 
 // ---------- Stremio Addon (multi-tenant via cfg token) ----------
 const idCache = new Map();
@@ -203,7 +207,7 @@ async function ensureChannelId(raw) {
 
 function buildAddon({ channels = [], lowQuota = true }) {
   const manifest = {
-    id: 'org.3holepunchmedia.youtube.universe',
+    id: 'org.cary.youtube.universe',
     version: '1.0.0',
     name: `YouTube Universe${lowQuota ? ' • Low-quota' : ''}`,
     description: `User-configured YouTube catalog${lowQuota ? ' • Low-quota mode (RSS)' : ''}`,
@@ -217,25 +221,34 @@ function buildAddon({ channels = [], lowQuota = true }) {
 
   const builder = new addonBuilder(manifest);
 
+  // Catalog
   builder.defineCatalogHandler(async ({ type, id }) => {
     if (type !== 'series' || id !== 'youtube-user') return { metas: [] };
+
     const metas = await Promise.all(channels.map(async (raw) => {
-      const channelId = await ensureChannelId(raw);
-      const name = raw.startsWith('@') ? raw : (channelId ? `Channel ${channelId.slice(0,8)}…` : raw);
+      const channelId = await ensureChannelId(raw);      // UC… or null
+      const safeKey   = channelId || toB64Url(raw);      // <-- no slashes!
+      const name      = raw.startsWith('@') ? raw : (channelId ? `Channel ${channelId.slice(0,8)}…` : raw);
       return {
-        id: `ytc:${channelId || raw}`,
+        id: `ytc:${safeKey}`,
         type: 'series',
         name,
         poster: 'https://i.imgur.com/PsWn3oM.png',
         posterShape: 'square'
       };
     }));
+
     return { metas };
   });
 
+  // Meta
   builder.defineMetaHandler(async ({ id }) => {
     if (!id.startsWith('ytc:')) return { meta: {} };
-    const key = id.slice(4);
+
+    let key = id.slice(4);             // UC… or b64url(raw)
+    if (!/^UC/.test(key)) {
+      try { key = fromB64Url(key); } catch {}
+    }
     const channelId = /^UC/.test(key) ? key : await ensureChannelId(key);
 
     let videos = [];
@@ -254,9 +267,18 @@ function buildAddon({ channels = [], lowQuota = true }) {
       } catch { /* ignore */ }
     }
 
-    return { meta: { id, type: 'series', name: `Channel ${channelId || key}`, poster: 'https://i.imgur.com/PsWn3oM.png', videos } };
+    return {
+      meta: {
+        id,
+        type: 'series',
+        name: `Channel ${channelId || key}`,
+        poster: 'https://i.imgur.com/PsWn3oM.png',
+        videos
+      }
+    };
   });
 
+  // Stream stays the same
   builder.defineStreamHandler(async ({ id }) => {
     if (!id.startsWith('ytv:')) return { streams: [] };
     const videoId = id.slice(4);
@@ -266,7 +288,38 @@ function buildAddon({ channels = [], lowQuota = true }) {
   return builder.getInterface();
 }
 
+
 // Manifest
+// Path-based manifest
+app.get('/cfg/:token/manifest.json', (req, res) => {
+  const token = String(req.params.token || '');
+  const cfg = token ? decodeCfg(token) : null;
+  if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
+  const addon = buildAddon(cfg);
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  res.set('Cache-Control', 'no-store');
+  res.send(JSON.stringify(addon.manifest));
+});
+
+// Path-based Stremio router
+app.get('/cfg/:token/:resource/:type/:id.json', async (req, res) => {
+  const token = String(req.params.token || '');
+  const cfg = token ? decodeCfg(token) : null;
+  if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
+
+  const addon = buildAddon(cfg);
+  const { resource, type, id } = req.params;
+
+  try {
+    if (resource === 'catalog') return res.json(await addon.get({ resource: 'catalog', type, id, extra: req.query }));
+    if (resource === 'meta')    return res.json(await addon.get({ resource: 'meta', type, id, extra: req.query }));
+    if (resource === 'stream')  return res.json(await addon.get({ resource: 'stream', type, id, extra: req.query }));
+    res.status(404).json({ error: 'unknown resource' });
+  } catch (e) {
+    console.error('addon handler error:', e);
+    res.status(500).json({ error: 'handler_error', detail: String(e) });
+  }
+});
 app.get('/manifest.json', (req, res) => {
   const token = String(req.query.cfg || '');
   const cfg = token ? decodeCfg(token) : null;
