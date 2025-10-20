@@ -308,6 +308,131 @@ app.get('/cfg/:token/catalog/:type/:id.json', async (req, res) => {
     res.status(500).json({ error: 'handler_error', detail: String(e) });
   }
 });
+// ---------- LEGACY (?cfg=...) COMPATIBILITY ROUTES ----------
+// Some Web Stremio builds still call these. We just proxy to the same logic.
+
+// /catalog/:type/:id.json?cfg=<token>
+app.get('/catalog/:type/:id.json', async (req, res) => {
+  const cfg = decodeCfg(String(req.query.cfg || ''));
+  if (!cfg) return res.status(400).json({ metas: [] });
+
+  const { type, id } = req.params;
+  if (type !== 'series' || id !== 'youtube-user') return res.json({ metas: [] });
+
+  try {
+    const metas = await Promise.all((cfg.channels || []).slice(0, 100).map(async (raw) => {
+      try {
+        const channelId = await ensureChannelId(raw);
+        const safeKey   = channelId || toB64Url(raw);
+
+        let title  = String(raw).startsWith('@') ? raw : `Channel ${channelId?.slice(0,8) ?? String(raw).slice(0,8)}…`;
+        let poster = 'https://i.imgur.com/PsWn3oM.png';
+
+        if (channelId) {
+          const prof = await fetchChannelProfile(channelId);
+          if (prof?.title)  title  = prof.title;
+          if (prof?.avatar) poster = prof.avatar;
+          if (!prof?.avatar) {
+            try {
+              const feed = await fetchChannelRSS(channelId);
+              poster = feed?.feed?.entry?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url || poster;
+            } catch {}
+          }
+        }
+
+        return { id: `ytc:${safeKey}`, type: 'series', name: title, poster, posterShape: 'square' };
+      } catch { return null; }
+    }));
+
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    res.json({ metas: metas.filter(Boolean) });
+  } catch (e) {
+    console.error('[LEGACY catalog] error:', e);
+    res.status(500).json({ error: 'handler_error', detail: String(e) });
+  }
+});
+
+// /meta/:type/:id.json?cfg=<token>
+app.get('/meta/:type/:id.json', async (req, res) => {
+  const cfg = decodeCfg(String(req.query.cfg || ''));
+  if (!cfg) return res.status(400).json({ meta: {} });
+
+  let rawId = String(req.params.id || '');
+  try { rawId = decodeURIComponent(rawId); } catch {}
+
+  let key = rawId.startsWith('ytc:') ? rawId.slice(4) : rawId;
+  if (!/^UC[0-9A-Za-z_-]{20,}$/.test(key)) { try { key = fromB64Url(key); } catch {} }
+  const channelId = /^UC/.test(key) ? key : await ensureChannelId(key);
+
+  let title  = `Channel ${channelId || key}`;
+  let poster = 'https://i.imgur.com/PsWn3oM.png';
+  let videos = [];
+
+  if (channelId) {
+    const prof = await fetchChannelProfile(channelId);
+    if (prof?.title)  title  = prof.title;
+    if (prof?.avatar) poster = prof.avatar;
+  }
+
+  if (cfg.lowQuota !== false && channelId) {
+    try {
+      const feed = await fetchChannelRSS(channelId);
+      title = feed?.feed?.title?.[0] || title;
+      const entries = feed?.feed?.entry || [];
+      videos = entries.map(e => {
+        const t = e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url;
+        return {
+          id: `ytv:${e['yt:videoId']?.[0]}`,
+          type: 'movie',
+          name: e.title?.[0] || 'Video',
+          releaseInfo: e.published?.[0]?.slice(0,10),
+          poster: t,
+          thumbnail: t,
+          background: t
+        };
+      }).filter(v => v.id);
+      if (poster === 'https://i.imgur.com/PsWn3oM.png' && entries[0]) {
+        poster = entries[0]['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url || poster;
+      }
+    } catch (e) {
+      console.error('[LEGACY meta] rss fail:', e && (e.message || e));
+    }
+  }
+
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  res.json({
+    meta: {
+      id: rawId.startsWith('ytc:') ? rawId : `ytc:${channelId || key}`,
+      type: 'series',
+      name: title,
+      poster,
+      videos,
+      links: channelId ? [{ name: 'Channel on YouTube', url: `https://www.youtube.com/channel/${channelId}` }] : []
+    }
+  });
+});
+
+// /stream/:type/:id.json?cfg=<token>
+app.get('/stream/:type/:id.json', (req, res) => {
+  const cfg = decodeCfg(String(req.query.cfg || ''));
+  if (!cfg) return res.status(400).json({ streams: [] });
+
+  const id = String(req.params.id || '');
+  if (!id.startsWith('ytv:')) return res.json({ streams: [] });
+
+  const videoId = id.slice(4);
+  const link = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  res.json({
+    streams: [{
+      name: 'YouTube',
+      title: 'Open on YouTube',
+      externalUrl: link,
+      url: link,
+      behaviorHints: { openExternal: true, notWebReady: true }
+    }]
+  });
+});
 
 // META: accept ytc:<UC|b64>, bare UC, or b64(raw). Type ignored.
 app.get('/cfg/:token/meta/:_type/:id.json', async (req, res) => {
