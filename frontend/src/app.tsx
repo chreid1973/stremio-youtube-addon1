@@ -4,6 +4,7 @@ import Header from './components/header';
 import ChannelCard from './components/ChannelCard';
 import { useChannels } from './hooks/useChannels';
 import { useSuggestions } from './hooks/useSuggestions';
+import { createAddonConfig } from './services/addonService';
 
 export default function App() {
   const { channels, addChannel, removeChannel, loading, error } = useChannels();
@@ -102,7 +103,11 @@ const [building, setBuilding] = useState(false);
         try {
           setBuilding(true);
           // Send “raw” identifiers—backend can resolve UC ids, @handles, or URLs.
-          const raw = channels.map(c => (/^UC[0-9A-Za-z_-]{20,}$/.test(c.id) ? c.id : (c.url || c.name)));
+          const raw = channels.map(c =>
+  /^UC[0-9A-Za-z_-]{20,}$/.test(c.id) ? c.id :
+  c.url || (c.name.startsWith('@') ? c.name : `@${c.name.replace(/\s+/g, '')}`)
+);
+
           const res = await createAddonConfig(raw, true); // RSS low-quota
           setInstall({ manifest: res.manifest_url, web: res.web_stremio_install, token: res.token });
           // Optional: auto-open Web Stremio in a new tab:
