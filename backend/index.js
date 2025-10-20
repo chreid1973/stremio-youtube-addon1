@@ -11,6 +11,17 @@ const PORT = process.env.PORT || 7000;
 // ---------- Middleware ----------
 app.use(cors({ origin: '*' })); // tighten later if you want
 app.use(express.json());
+// --- Add this route ---
+app.get('/suggest', async (req, res) => {
+  const q = String(req.query.query || '').trim();
+  if (!q) return res.status(400).json({ error: 'missing query' });
+  try {
+    const hits = await searchChannels(q);
+    res.json({ query: q, suggestions: hits.slice(0, 8) });
+  } catch {
+    res.status(502).json({ error: 'search_failed' });
+  }
+});
 
 // ---------- Health ----------
 app.get('/', (_req, res) => {
