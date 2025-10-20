@@ -207,6 +207,23 @@ app.post('/create-config', (req, res) => {
 
   res.json({ token, manifest_url: manifest, web_stremio_install: webStremio, desktop_stremio_install: desktopDeep });
 });
+// ---------- Channel ID cache & resolver ----------
+const idCache = new Map();
+
+async function ensureChannelId(raw) {
+  if (!raw) return null;
+  if (idCache.has(raw)) return idCache.get(raw);
+
+  // Fast path: already a UC… YouTube channel ID
+  if (/^UC[0-9A-Za-z_-]{20,}$/.test(raw)) {
+    idCache.set(raw, raw);
+    return raw;
+  }
+
+  const id = await resolveChannelId(raw);
+  if (id) idCache.set(raw, id);
+  return id || null;
+}
 
 // ---------- Manifest (path-based, plain JSON) ----------
 app.get('/cfg/:token/manifest.json', (req, res) => {
