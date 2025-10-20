@@ -3,7 +3,6 @@ import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
 import { parseStringPromise } from 'xml2js';
-import { addonBuilder } from 'stremio-addon-sdk';
 
 const app = express();
 const PORT = process.env.PORT || 7000;
@@ -25,12 +24,8 @@ function fromB64Url(b64) {
   const fixed = b64.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(b64.length / 4) * 4, '=');
   return Buffer.from(fixed, 'base64').toString('utf8');
 }
-function encodeCfg(cfgObj) {
-  return toB64Url(JSON.stringify(cfgObj));
-}
-function decodeCfg(token) {
-  try { return JSON.parse(fromB64Url(token)); } catch { return null; }
-}
+function encodeCfg(cfgObj) { return toB64Url(JSON.stringify(cfgObj)); }
+function decodeCfg(token) { try { return JSON.parse(fromB64Url(token)); } catch { return null; } }
 
 async function resolveChannelId(input) {
   const raw = String(input || '').trim();
@@ -45,25 +40,30 @@ async function resolveChannelId(input) {
   else url = `https://www.youtube.com/@${raw}`;
 
   try {
-    const html = await axios.get(url, { timeout: 8000 }).then(r => r.data);
+    const html = await axios.get(url, {
+      timeout: 12000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cookie': 'PREF=hl=en'
+      }
+    }).then(r => r.data);
     const m = html.match(/"channelId":"(UC[0-9A-Za-z_-]{20,})"/);
     if (m) return m[1];
-  } catch { /* ignore */ }
-
+  } catch {}
   return null;
 }
 
 async function fetchChannelRSS(channelId) {
   const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
-  const xml = await axios.get(feedUrl, { timeout: 10000 }).then(r => r.data);
-  const parsed = await parseStringPromise(xml);
-  return parsed;
+  const xml = await axios.get(feedUrl, { timeout: 12000 }).then(r => r.data);
+  return parseStringPromise(xml);
 }
 
 async function searchChannels(query) {
   const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQAg%253D%253D`;
   const html = await axios.get(url, {
-    timeout: 12000,
+    timeout: 15000,
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
       'Accept-Language': 'en-US,en;q=0.9',
@@ -71,12 +71,10 @@ async function searchChannels(query) {
     }
   }).then(r => r.data);
 
-  let m = html.match(/ytInitialData"\s*:\s*(\{.+?\})\s*[,<]/s);
-  if (!m) m = html.match(/var\s+ytInitialData\s*=\s*(\{.+?\})\s*;/s);
+  let m = html.match(/ytInitialData"\s*:\s*(\{.+?\})\s*[,<]/s) || html.match(/var\s+ytInitialData\s*=\s*(\{.+?\})\s*;/s);
   if (!m) return [];
 
-  let data;
-  try { data = JSON.parse(m[1]); } catch { return []; }
+  let data; try { data = JSON.parse(m[1]); } catch { return []; }
 
   const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
   const results = [];
@@ -95,9 +93,9 @@ async function searchChannels(query) {
   }
   return results;
 }
-// --- near other helpers ---
-const profileCache = new Map(); // UCid -> { title, avatar }
 
+// Channel profile (title + avatar)
+const profileCache = new Map(); // UCid -> { title, avatar }
 async function fetchChannelProfile(channelId) {
   if (!channelId) return null;
   if (profileCache.has(channelId)) return profileCache.get(channelId);
@@ -105,7 +103,7 @@ async function fetchChannelProfile(channelId) {
   try {
     const url = `https://www.youtube.com/channel/${channelId}`;
     const html = await axios.get(url, {
-      timeout: 12000,
+      timeout: 15000,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
@@ -113,15 +111,12 @@ async function fetchChannelProfile(channelId) {
       }
     }).then(r => r.data);
 
-    // Try og:image (avatar) and og:title
     const ogImg = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i)?.[1];
     const ogTitle = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i)?.[1];
 
-    // Fallback to ytInitialData avatar thumbnails
     let avatar = ogImg || null;
     if (!avatar) {
-      let m = html.match(/ytInitialData"\s*:\s*(\{.+?\})\s*[,<]/s) ||
-              html.match(/var\s+ytInitialData\s*=\s*(\{.+?\})\s*;/s);
+      let m = html.match(/ytInitialData"\s*:\s*(\{.+?\})\s*[,<]/s) || html.match(/var\s+ytInitialData\s*=\s*(\{.+?\})\s*;/s);
       if (m) {
         try {
           const data = JSON.parse(m[1]);
@@ -130,13 +125,10 @@ async function fetchChannelProfile(channelId) {
         } catch {}
       }
     }
-
     const out = { title: ogTitle || `Channel ${channelId.slice(0,8)}…`, avatar };
     profileCache.set(channelId, out);
     return out;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 // ---------- Frontend helper API ----------
@@ -166,12 +158,10 @@ app.get('/resolve', async (req, res) => {
       return res.json({ channelId, title: `Channel ${channelId.slice(0, 8)}…` });
     }
   }
-
   try {
     const hits = await searchChannels(input);
     if (hits.length) return res.status(404).json({ error: 'ambiguous', suggestions: hits.slice(0, 8) });
   } catch {}
-
   return res.status(404).json({ error: 'channel not found' });
 });
 
@@ -211,7 +201,6 @@ app.post('/create-config', (req, res) => {
 
   const token = encodeCfg(cfg);
   const base = publicBaseUrl(req);
-
   const manifest = `${base}/cfg/${token}/manifest.json`;
   const webStremio = `https://web.stremio.com/#/addons?addon=${encodeURIComponent(manifest)}`;
   const desktopDeep = `stremio://${manifest}`;
@@ -219,83 +208,13 @@ app.post('/create-config', (req, res) => {
   res.json({ token, manifest_url: manifest, web_stremio_install: webStremio, desktop_stremio_install: desktopDeep });
 });
 
-// ---------- Stremio Addon (logic we also reuse below) ----------
-const idCache = new Map();
-async function ensureChannelId(raw) {
-  if (idCache.has(raw)) return idCache.get(raw);
-  const id = await resolveChannelId(raw);
-  if (id) idCache.set(raw, id);
-  return id || null;
-}
-
-function buildAddon({ channels = [], lowQuota = true }) {
-  return {
-    manifest: {
-      id: 'org.cary.youtube.universe',
-      version: '1.0.0',
-      name: `YouTube Universe${lowQuota ? ' • Low-quota' : ''}`,
-      description: `User-configured YouTube catalog${lowQuota ? ' • Low-quota mode (RSS)' : ''}`,
-      catalogs: [
-        { type: 'series', id: 'youtube-user', name: 'YouTube Channels', extra: [{ name: 'search', isRequired: false }] }
-      ],
-      resources: ['catalog', 'meta', 'stream'],
-      types: ['series', 'movie'],
-      idPrefixes: ['ytc:', 'ytv:']
-    }
-  };
-}
-
-
-  const builder = new addonBuilder(manifest);
-
-  // 🔽 THIS PART replaces your old catalog handler
-  builder.defineCatalogHandler(async ({ type, id }) => {
-    if (type !== 'series' || id !== 'youtube-user') return { metas: [] };
-
-    const metas = await Promise.all(
-      channels.map(async (raw) => {
-        const channelId = await ensureChannelId(raw);
-        const safeKey = channelId || toB64Url(raw);
-
-        // ✅ clean, collision-free channel name
-        const name =
-          raw.startsWith('@')
-            ? raw
-            : channelId
-            ? `Channel ${channelId.slice(0, 8)}…`
-            : raw;
-
-        // ✅ optional: use fetched avatar as poster later
-        return {
-          id: `ytc:${safeKey}`,
-          type: 'series',
-          name, // ← this replaces title
-          poster: 'https://i.imgur.com/PsWn3oM.png',
-          posterShape: 'square',
-        };
-      })
-    );
-
-    return { metas };
-  });
-  // 🔼 END of new catalog handler
-
-  // Keep the rest — your metaHandler and streamHandler go here
-  builder.defineMetaHandler(...);
-  builder.defineStreamHandler(...);
-
-  return builder.getInterface();
-}
-
-
-// ---------- Manifest (path-based) ----------
+// ---------- Manifest (path-based, plain JSON) ----------
 app.get('/cfg/:token/manifest.json', (req, res) => {
   try {
     const token = String(req.params.token || '');
     const cfg = token ? decodeCfg(token) : null;
     if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
 
-    // Build manifest directly (no addonBuilder)
     const manifest = {
       id: 'org.cary.youtube.universe',
       version: '1.0.0',
@@ -318,9 +237,9 @@ app.get('/cfg/:token/manifest.json', (req, res) => {
   }
 });
 
+// ---------- Explicit resource routes ----------
 
-// ---------- Explicit resource routes (no SDK HTTP delegation) ----------
-// CATALOG
+// CATALOG: /cfg/<token>/catalog/series/youtube-user.json
 app.get('/cfg/:token/catalog/:type/:id.json', async (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
@@ -334,51 +253,32 @@ app.get('/cfg/:token/catalog/:type/:id.json', async (req, res) => {
       try {
         const channelId = await ensureChannelId(raw);
         const safeKey = channelId || toB64Url(raw);
-// inside catalog handler loop after you compute channelId & safeKey
-let title = String(raw).startsWith('@') ? raw : `Channel ${channelId?.slice(0,8) ?? String(raw).slice(0,8)}…`;
-let poster = 'https://i.imgur.com/PsWn3oM.png';
 
-// Try profile page first (avatar + proper channel title)
-if (channelId) {
-  const prof = await fetchChannelProfile(channelId);
-  if (prof?.title)  title  = prof.title;
-  if (prof?.avatar) poster = prof.avatar;
-}
+        // friendly name + avatar
+        let title = String(raw).startsWith('@') ? raw : `Channel ${channelId?.slice(0,8) ?? String(raw).slice(0,8)}…`;
+        let poster = 'https://i.imgur.com/PsWn3oM.png';
 
-// Optional: fallback to RSS thumbnail if no avatar found
-if (!poster && channelId) {
-  try {
-    const feed = await fetchChannelRSS(channelId);
-    poster = feed?.feed?.entry?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url || poster;
-  } catch {}
-}
-
-metas.push({
-  id: `ytc:${safeKey}`,
-  type: 'series',
-  name: title,
-  poster,
-  posterShape: 'square'
-});
-
-        // Try to get a friendly name & thumbnail from RSS
-        let title = String(raw);
-        let thumb = 'https://i.imgur.com/PsWn3oM.png';
         if (channelId) {
-          try {
-            const feed = await fetchChannelRSS(channelId);
-            title = feed?.feed?.title?.[0] || title;
-            const t = feed?.feed?.entry?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url;
-            if (t) thumb = t;
-          } catch { /* ignore */ }
+          const prof = await fetchChannelProfile(channelId);
+          if (prof?.title)  title  = prof.title;
+          if (prof?.avatar) poster = prof.avatar;
+
+          // fallback to RSS thumb if avatar missing
+          if (!prof?.avatar) {
+            try {
+              const feed = await fetchChannelRSS(channelId);
+              poster = feed?.feed?.entry?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url || poster;
+            } catch {}
+          }
         }
 
-        return { id: `ytc:${safeKey}`, type: 'series', name: title, poster: thumb, posterShape: 'square' };
+        return { id: `ytc:${safeKey}`, type: 'series', name: title, poster, posterShape: 'square' };
       } catch (e) {
         console.error('catalog: skip raw=', raw, e);
         return null;
       }
     }));
+
     res.set('Content-Type', 'application/json; charset=utf-8');
     res.json({ metas: metas.filter(Boolean) });
   } catch (e) {
@@ -387,7 +287,7 @@ metas.push({
   }
 });
 
-// META
+// META: /cfg/<token>/meta/series/ytc:<UC...|b64>.json
 app.get('/cfg/:token/meta/:type/:id.json', async (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
@@ -398,17 +298,14 @@ app.get('/cfg/:token/meta/:type/:id.json', async (req, res) => {
   if (type !== 'series' || !rawId.startsWith('ytc:')) return res.json({ meta: {} });
 
   try {
-    let key = rawId.slice(4); // UC… or b64url(raw)
-    if (!/^UC/.test(key)) {
-      try { key = fromB64Url(key); } catch {}
-    }
+    let key = rawId.slice(4);
+    if (!/^UC/.test(key)) { try { key = fromB64Url(key); } catch {} }
     const channelId = /^UC/.test(key) ? key : await ensureChannelId(key);
 
-    // Default name/poster
     let title = `Channel ${channelId || key}`;
     let thumb = 'https://i.imgur.com/PsWn3oM.png';
-
     let videos = [];
+
     if (cfg.lowQuota !== false && channelId) {
       try {
         const feed = await fetchChannelRSS(channelId);
@@ -420,6 +317,7 @@ app.get('/cfg/:token/meta/:type/:id.json', async (req, res) => {
           name: e.title?.[0] || 'Video',
           releaseInfo: e.published?.[0]?.slice(0, 10),
           poster: e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url,
+          thumbnail: e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url,
           background: e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url
         })).filter(v => v.id);
         const t = entries?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url;
@@ -429,8 +327,10 @@ app.get('/cfg/:token/meta/:type/:id.json', async (req, res) => {
       }
     }
 
+    const links = channelId ? [{ name: 'Channel on YouTube', url: `https://www.youtube.com/channel/${channelId}` }] : [];
+
     res.set('Content-Type', 'application/json; charset=utf-8');
-    res.json({ meta: { id: rawId, type: 'series', name: title, poster: thumb, videos } });
+    res.json({ meta: { id: rawId, type: 'series', name: title, poster: thumb, videos, links } });
   } catch (e) {
     console.error('meta error:', e);
     res.status(500).json({ error: 'handler_error', detail: String(e) });
@@ -450,17 +350,13 @@ app.get('/cfg/:token/stream/:type/:id.json', (req, res) => {
   if (!videoId) return res.json({ streams: [] });
 
   const link = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
-
   const streams = [
     {
       name: 'YouTube',
       title: 'Open on YouTube',
       externalUrl: link,
-      // these hints make Stremio show a clickable external link instead of “search”
-      behaviorHints: {
-        openExternal: true,
-        notWebReady: true
-      }
+      url: link, // extra compatibility
+      behaviorHints: { openExternal: true, notWebReady: true }
     }
   ];
 
@@ -468,16 +364,26 @@ app.get('/cfg/:token/stream/:type/:id.json', (req, res) => {
   res.json({ streams });
 });
 
-
 // ---------- Optional debug ----------
 app.get('/manifest.json', (req, res) => {
   const token = String(req.query.cfg || '');
   const cfg = token ? decodeCfg(token) : null;
   if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
-  const addon = buildAddon(cfg);
+
+  const manifest = {
+    id: 'org.cary.youtube.universe',
+    version: '1.0.0',
+    name: `YouTube Universe${cfg.lowQuota !== false ? ' • Low-quota' : ''}`,
+    description: `User-configured YouTube catalog${cfg.lowQuota !== false ? ' • Low-quota mode (RSS)' : ''}`,
+    catalogs: [{ type: 'series', id: 'youtube-user', name: 'YouTube Channels', extra: [{ name: 'search', isRequired: false }] }],
+    resources: ['catalog', 'meta', 'stream'],
+    types: ['series', 'movie'],
+    idPrefixes: ['ytc:', 'ytv:']
+  };
+
   res.set('Content-Type', 'application/json; charset=utf-8');
   res.set('Cache-Control', 'no-store');
-  res.send(JSON.stringify(addon.manifest));
+  res.send(JSON.stringify(manifest));
 });
 
 app.get('/_cfg_debug', (req, res) => {
