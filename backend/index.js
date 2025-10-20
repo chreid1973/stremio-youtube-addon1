@@ -311,25 +311,40 @@ app.get('/cfg/:token/manifest.json', (req, res) => {
   res.send(JSON.stringify(addon.manifest));
 });
 
-// Path-based Stremio router
+// Path-based Stremio router — delegate to SDK and let it parse the path
 app.get('/cfg/:token/:resource/:type/:id.json', async (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
   if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
 
   const addon = buildAddon(cfg);
-  const { resource, type, id } = req.params;
 
   try {
-    if (resource === 'catalog') return res.json(await addon.get({ resource: 'catalog', type, id, extra: req.query }));
-    if (resource === 'meta')    return res.json(await addon.get({ resource: 'meta', type, id, extra: req.query }));
-    if (resource === 'stream')  return res.json(await addon.get({ resource: 'stream', type, id, extra: req.query }));
-    res.status(404).json({ error: 'unknown resource' });
+    // Rebuild the URL Stremio SDK expects, preserving querystring if present
+    const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+    const strippedUrl = `/${req.params.resource}/${req.params.type}/${req.params.id}.json${query}`;
+
+    // Temporarily rewrite req.url so the SDK sees a normal route
+    const original = req.url;
+    req.url = strippedUrl;
+
+    await addon.get(req, res);  // let the SDK handle the request fully
+
+    req.url = original; // restore after
   } catch (e) {
-    console.error('addon handler error:', e);
-    res.status(500).json({ error: 'handler_error', detail: String(e) });
+    console.error('addon handler error:', {
+      resource: req.params.resource,
+      type: req.params.type,
+      id: req.params.id,
+      err: e && (e.stack || e.message || e)
+    });
+    res.status(500).json({
+      error: 'handler_error',
+      detail: e && (e.stack || e.message || JSON.stringify(e))
+    });
   }
 });
+
 app.get('/manifest.json', (req, res) => {
   const token = String(req.query.cfg || '');
   const cfg = token ? decodeCfg(token) : null;
@@ -349,25 +364,6 @@ app.get('/_cfg_debug', (req, res) => {
   res.json({ ok: !!cfg, cfg, tokenPreview: token.slice(0, 24) });
 });
 
-
-// Generic Stremio router
-app.get('/:resource/:type/:id.json', async (req, res) => {
-  const token = String(req.query.cfg || '');
-  const cfg = token ? decodeCfg(token) : null;
-  if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
-
-  const addon = buildAddon(cfg);
-  const { resource, type, id } = req.params;
-
-  try {
-    if (resource === 'catalog') return res.json(await addon.get({ resource: 'catalog', type, id, extra: req.query }));
-    if (resource === 'meta')    return res.json(await addon.get({ resource: 'meta', type, id, extra: req.query }));
-    if (resource === 'stream')  return res.json(await addon.get({ resource: 'stream', type, id, extra: req.query }));
-    res.status(404).json({ error: 'unknown resource' });
-  } catch (e) {
-    res.status(500).json({ error: 'handler_error', detail: String(e) });
-  }
-});
 
 // ---------- Start ----------
 app.listen(PORT, () => {
