@@ -300,19 +300,8 @@ function buildAddon({ channels = [], lowQuota = true }) {
 
 
 // Manifest
-// Path-based manifest
-app.get('/cfg/:token/manifest.json', (req, res) => {
-  const token = String(req.params.token || '');
-  const cfg = token ? decodeCfg(token) : null;
-  if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
-  const addon = buildAddon(cfg);
-  res.set('Content-Type', 'application/json; charset=utf-8');
-  res.set('Cache-Control', 'no-store');
-  res.send(JSON.stringify(addon.manifest));
-});
-
-// Path-based Stremio router — delegate to SDK and let it parse the path
-app.get('/cfg/:token/:resource/:type/:id.json', async (req, res) => {
+// One router to rule them all: delegate everything under /cfg/:token to Stremio SDK
+app.use('/cfg/:token', (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
   if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
@@ -320,30 +309,12 @@ app.get('/cfg/:token/:resource/:type/:id.json', async (req, res) => {
   const addon = buildAddon(cfg);
 
   try {
-    // Build the URL the SDK expects, preserving any query string
-    const query = req.originalUrl.includes('?')
-      ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
-      : '';
-    // Express route already consumes the ".json" literal, so :id does NOT include ".json"
-    const strippedUrl = `/${req.params.resource}/${req.params.type}/${req.params.id}.json${query}`;
-
-    // Temporarily rewrite req.url so the SDK sees a standard route
-    const originalUrl = req.url;
-    req.url = strippedUrl;
-
-    await addon.get(req, res);          // <-- correct call: pass req, res
-
-    req.url = originalUrl;              // restore after
+    addon.serveHTTP(req, res);  // SDK takes over from here
   } catch (e) {
-    console.error('addon handler error:', {
-      resource: req.params.resource,
-      type: req.params.type,
-      id: req.params.id,
-      err: e && (e.stack || e.message || e)
-    });
+    console.error('serveHTTP error:', e && (e.stack || e.message || e));
     res.status(500).json({
       error: 'handler_error',
-      detail: e && (e.stack || e.message || JSON.stringify(e))
+      detail: e && (e.stack || e.message || String(e))
     });
   }
 });
