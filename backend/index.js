@@ -302,6 +302,9 @@ version: '1.0.1',              // bump
 app.get('/cfg/:token/catalog/:type/:id.json', async (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
+  res.set('Content-Type', 'application/json; charset=utf-8');
+res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+return res.json({ metas: metas.filter(Boolean) });
   if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
 
   const { type, id } = req.params;
@@ -395,6 +398,9 @@ const cfg = decodeCfg(token);
 app.get('/meta/:type/:id.json', async (req, res) => {
   const token = extractCfgFromReq(req);
 const cfg = decodeCfg(token);
+  res.set('Content-Type', 'application/json; charset=utf-8');
+res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+return res.json({ meta: { ... } });
 
   if (!cfg) return res.status(400).json({ meta: {} });
 
@@ -457,7 +463,9 @@ const cfg = decodeCfg(token);
 app.get('/stream/:type/:id.json', (req, res) => {
   const token = extractCfgFromReq(req);
 const cfg = decodeCfg(token);
-
+res.set('Content-Type', 'application/json; charset=utf-8');
+res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+return res.json({ streams });
   if (!cfg) return res.status(400).json({ streams: [] });
 
   const id = String(req.params.id || '');
