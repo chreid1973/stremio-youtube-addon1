@@ -400,7 +400,7 @@ app.get('/meta/:type/:id.json', async (req, res) => {
 const cfg = decodeCfg(token);
   res.set('Content-Type', 'application/json; charset=utf-8');
 res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-return res.json({ meta: { ... } });
+return res.json({ meta });
 
   if (!cfg) return res.status(400).json({ meta: {} });
 
