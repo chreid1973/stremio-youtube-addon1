@@ -23,7 +23,7 @@ export default function App() {
         {/* Input row */}
         <div className="bg-white shadow rounded p-4 mb-6">
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Add a YouTube channel (@handle or URL) or GitHub repo URL
+            Add a YouTube channel (@handle or URL)
           </label>
           <div className="flex gap-2">
             <input
