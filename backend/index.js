@@ -312,6 +312,7 @@ app.get('/cfg/:token/manifest.json', (req, res) => {
 });
 
 // Path-based Stremio router — delegate to SDK and let it parse the path
+// Path-based Stremio router — use plain object call
 app.get('/cfg/:token/:resource/:type/:id.json', async (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
@@ -320,17 +321,19 @@ app.get('/cfg/:token/:resource/:type/:id.json', async (req, res) => {
   const addon = buildAddon(cfg);
 
   try {
-    // Rebuild the URL Stremio SDK expects, preserving querystring if present
-    const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
-    const strippedUrl = `/${req.params.resource}/${req.params.type}/${req.params.id}.json${query}`;
+    // Decode id param (it may contain ':' and base64url chars)
+    const args = {
+      resource: req.params.resource,
+      type: req.params.type,
+      id: decodeURIComponent(req.params.id),
+      extra: req.query // Stremio expects `extra` object for query params
+    };
 
-    // Temporarily rewrite req.url so the SDK sees a normal route
-    const original = req.url;
-    req.url = strippedUrl;
-
-    await addon.get(req, res);  // let the SDK handle the request fully
-
-    req.url = original; // restore after
+    const out = await addon.get(args); // <-- plain object, not req/res
+    // Be explicit with JSON output
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    res.set('Cache-Control', 'no-store');
+    res.send(JSON.stringify(out));
   } catch (e) {
     console.error('addon handler error:', {
       resource: req.params.resource,
