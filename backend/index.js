@@ -224,6 +224,11 @@ async function ensureChannelId(raw) {
   if (id) idCache.set(raw, id);
   return id || null;
 }
+// ---- noisy tracer for everything under /cfg/<token>/... ----
+app.use('/cfg/:token', (req, _res, next) => {
+  console.log('[CFG HIT]', req.method, req.originalUrl);
+  next();
+});
 
 // ---------- Manifest (path-based, plain JSON) ----------
 app.get('/cfg/:token/manifest.json', (req, res) => {
@@ -304,8 +309,8 @@ app.get('/cfg/:token/catalog/:type/:id.json', async (req, res) => {
   }
 });
 
-// META: accept ytc:<UC|b64>, bare UC, or b64(raw). Type is ignored.
-app.get('/cfg/:token/meta/:type/:id.json', async (req, res) => {
+// META: accept ytc:<UC|b64>, bare UC, or b64(raw). Type ignored.
+app.get('/cfg/:token/meta/:_type/:id.json', async (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
   if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
@@ -313,28 +318,29 @@ app.get('/cfg/:token/meta/:type/:id.json', async (req, res) => {
   let rawId = String(req.params.id || '');
   try { rawId = decodeURIComponent(rawId); } catch {}
 
-  // Normalize to a resolvable key
+  // Normalize key
   let key = rawId.startsWith('ytc:') ? rawId.slice(4) : rawId;
 
-  // UC directly? keep it. Otherwise try b64 → UC → handle/url resolve
+  // Try to decode base64-url; if that fails, leave as-is
   if (!/^UC[0-9A-Za-z_-]{20,}$/.test(key)) {
     try { key = fromB64Url(key); } catch {}
   }
+
   let channelId = /^UC[0-9A-Za-z_-]{20,}$/.test(key) ? key : await ensureChannelId(key);
 
-  // Always return *some* meta so Stremio never sees {}
-  let title = `Channel ${channelId || key}`;
+  console.log('[META]', { rawId, key, channelId, lowQuota: cfg.lowQuota });
+
+  // Always return some meta (prevents "{}")
+  let title  = `Channel ${channelId || key}`;
   let poster = 'https://i.imgur.com/PsWn3oM.png';
   let videos = [];
 
-  // Try avatar/title from profile
   if (channelId) {
     const prof = await fetchChannelProfile(channelId);
     if (prof?.title)  title  = prof.title;
     if (prof?.avatar) poster = prof.avatar;
   }
 
-  // Low-quota RSS videos
   if (cfg.lowQuota !== false && channelId) {
     try {
       const feed = await fetchChannelRSS(channelId);
@@ -346,7 +352,7 @@ app.get('/cfg/:token/meta/:type/:id.json', async (req, res) => {
           id: `ytv:${e['yt:videoId']?.[0]}`,
           type: 'movie',
           name: e.title?.[0] || 'Video',
-          releaseInfo: e.published?.[0]?.slice(0, 10),
+          releaseInfo: e.published?.[0]?.slice(0,10),
           poster: t,
           thumbnail: t,
           background: t
@@ -355,15 +361,22 @@ app.get('/cfg/:token/meta/:type/:id.json', async (req, res) => {
       if (poster === 'https://i.imgur.com/PsWn3oM.png' && entries[0]) {
         poster = entries[0]['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url || poster;
       }
+      console.log('[META OK]', { videoCount: videos.length });
     } catch (e) {
-      console.error('meta: rss fetch failed for', channelId, e);
+      console.error('[META RSS FAIL]', channelId, e && (e.message || e));
     }
   }
 
   res.set('Content-Type', 'application/json; charset=utf-8');
   return res.json({
-    meta: { id: rawId.startsWith('ytc:') ? rawId : `ytc:${channelId || key}`, type: 'series', name: title, poster, videos,
-            links: channelId ? [{ name: 'Channel on YouTube', url: `https://www.youtube.com/channel/${channelId}` }] : [] }
+    meta: {
+      id: rawId.startsWith('ytc:') ? rawId : `ytc:${channelId || key}`,
+      type: 'series',
+      name: title,
+      poster,
+      videos,
+      links: channelId ? [{ name: 'Channel on YouTube', url: `https://www.youtube.com/channel/${channelId}` }] : []
+    }
   });
 });
 
