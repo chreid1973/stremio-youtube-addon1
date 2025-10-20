@@ -1,6 +1,6 @@
 // frontend/src/app.tsx
 import React, { useState } from 'react';
-import Header from './components/header';              // lowercase if your file is header.tsx
+import Header from './components/header';
 import ChannelCard from './components/ChannelCard';
 import { useChannels } from './hooks/useChannels';
 import { useSuggestions } from './hooks/useSuggestions';
