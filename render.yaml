@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: stremio-youtube-backend
+    env: node
+    rootDir: backend
+    buildCommand: npm ci && npm start
+    startCommand: node index.js
+    plan: free
+    runtime: node
+  - type: static
+    name: stremio-youtube-frontend
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_BACKEND_BASE
+        value: https://stremio-youtube-addon1.onrender.com
