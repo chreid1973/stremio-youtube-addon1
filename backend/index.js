@@ -10,6 +10,24 @@ const PORT = process.env.PORT || 7000;
 // ---------- Middleware ----------
 app.use(cors({ origin: '*' }));
 app.use(express.json());
+// place AFTER app.use(express.json()) and BEFORE your routes
+app.use((req, _res, next) => {
+  // already path-based? skip
+  if (req.path.startsWith('/cfg/')) return next();
+
+  // legacy resource? try to rewrite to path-based using the token we can extract
+  if (/^\/(catalog|meta|stream)\//.test(req.path)) {
+    const token = extractCfgFromReq(req);
+    if (token) {
+      const hasQuery = req.url.includes('?');
+      // e.g. /catalog/series/youtube-user.json -> /cfg/<token>/catalog/series/youtube-user.json
+      const newUrl = `/cfg/${token}${req.path}${hasQuery ? '&' : '?'}__legacy=1`;
+      console.log('[LEGACY → PATH]', req.url, '→', newUrl);
+      req.url = newUrl;  // internal rewrite; your path routes will handle it
+    }
+  }
+  next();
+});
 
 // ---------- Health ----------
 app.get('/', (_req, res) => {
@@ -17,6 +35,27 @@ app.get('/', (_req, res) => {
 });
 
 // ---------- Helpers ----------
+function extractCfgFromReq(req) {
+  // 1) direct ?cfg=
+  if (req.query && req.query.cfg) return String(req.query.cfg);
+
+  // 2) addon / addonUrl contain the manifest URL
+  const raw = String(req.query?.addon || req.query?.addonUrl || '');
+  if (!raw) return '';
+
+  let urlStr = raw;
+  try { urlStr = decodeURIComponent(raw); } catch {}
+
+  // path-based: .../cfg/<TOKEN>/manifest.json
+  const mPath = urlStr.match(/\/cfg\/([^/]+)\/manifest\.json/i);
+  if (mPath && mPath[1]) return mPath[1];
+
+  // query-based: .../manifest.json?cfg=<TOKEN>
+  const mQuery = urlStr.match(/[?&]cfg=([^&#]+)/i);
+  if (mQuery && mQuery[1]) return mQuery[1];
+
+  return '';
+}
 function toB64Url(str) {
   return Buffer.from(str, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
@@ -313,7 +352,9 @@ app.get('/cfg/:token/catalog/:type/:id.json', async (req, res) => {
 
 // /catalog/:type/:id.json?cfg=<token>
 app.get('/catalog/:type/:id.json', async (req, res) => {
-  const cfg = decodeCfg(String(req.query.cfg || ''));
+  const token = extractCfgFromReq(req);
+const cfg = decodeCfg(token);
+
   if (!cfg) return res.status(400).json({ metas: [] });
 
   const { type, id } = req.params;
@@ -354,7 +395,9 @@ app.get('/catalog/:type/:id.json', async (req, res) => {
 
 // /meta/:type/:id.json?cfg=<token>
 app.get('/meta/:type/:id.json', async (req, res) => {
-  const cfg = decodeCfg(String(req.query.cfg || ''));
+  const token = extractCfgFromReq(req);
+const cfg = decodeCfg(token);
+
   if (!cfg) return res.status(400).json({ meta: {} });
 
   let rawId = String(req.params.id || '');
@@ -414,7 +457,9 @@ app.get('/meta/:type/:id.json', async (req, res) => {
 
 // /stream/:type/:id.json?cfg=<token>
 app.get('/stream/:type/:id.json', (req, res) => {
-  const cfg = decodeCfg(String(req.query.cfg || ''));
+  const token = extractCfgFromReq(req);
+const cfg = decodeCfg(token);
+
   if (!cfg) return res.status(400).json({ streams: [] });
 
   const id = String(req.params.id || '');
