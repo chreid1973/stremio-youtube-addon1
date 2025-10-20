@@ -9,19 +9,8 @@ const app = express();
 const PORT = process.env.PORT || 7000;
 
 // ---------- Middleware ----------
-app.use(cors({ origin: '*' })); // tighten later if you want
+app.use(cors({ origin: '*' }));
 app.use(express.json());
-// --- Add this route ---
-app.get('/suggest', async (req, res) => {
-  const q = String(req.query.query || '').trim();
-  if (!q) return res.status(400).json({ error: 'missing query' });
-  try {
-    const hits = await searchChannels(q);
-    res.json({ query: q, suggestions: hits.slice(0, 8) });
-  } catch {
-    res.status(502).json({ error: 'search_failed' });
-  }
-});
 
 // ---------- Health ----------
 app.get('/', (_req, res) => {
@@ -29,88 +18,6 @@ app.get('/', (_req, res) => {
 });
 
 // ---------- Helpers ----------
-// --- Add this helper ---
-async function searchChannels(query) {
-  // Filter to channels: sp=EgIQAg%3D%3D
-  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQAg%253D%253D`;
-  const html = await axios.get(url, {
-    timeout: 12000,
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Cookie': 'PREF=hl=en' // normalize markup to English
-    }
-  }).then(r => r.data);
-
-  // Try both shapes for ytInitialData
-  let m = html.match(/ytInitialData"\s*:\s*(\{.+?\})\s*[,<]/s);
-  if (!m) m = html.match(/var\s+ytInitialData\s*=\s*(\{.+?\})\s*;/s);
-  if (!m) return [];
-
-  let data;
-  try { data = JSON.parse(m[1]); } catch { return []; }
-
-  const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
-  const results = [];
-  for (const sec of sections) {
-    const items = sec?.itemSectionRenderer?.contents || [];
-    for (const item of items) {
-      const ch = item?.channelRenderer;
-      if (!ch) continue;
-      const channelId = ch.channelId;
-      const title = ch.title?.simpleText || ch.title?.runs?.[0]?.text;
-      const thumb = ch.thumbnail?.thumbnails?.slice(-1)?.[0]?.url;
-      const subs = ch.subscriberCountText?.simpleText || (ch.subscriberCountText?.runs || []).map(r => r.text).join('') || '';
-      const desc = (ch.descriptionSnippet?.runs || []).map(r => r.text).join('') || '';
-      if (channelId && title) {
-        results.push({ channelId, title, thumbnail: thumb, subscribers: subs, description: desc });
-      }
-    }
-  }
-  return results;
-}
-
-async function searchChannels(query) {
-  // Filter to channels: sp=EgIQAg%3D%3D
-  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQAg%253D%253D`;
-  const html = await axios.get(url, { timeout: 10000 }).then(r => r.data);
-
-  // Grab ytInitialData JSON
-  const m = html.match(/ytInitialData"\s*:\s*(\{.+?\})\s*[,<]/s);
-  if (!m) return [];
-
-  let data;
-  try { data = JSON.parse(m[1]); } catch { return []; }
-
-  // Walk the structure to find channel renderers
-  const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
-  const results = [];
-
-  for (const sec of sections) {
-    const items = sec?.itemSectionRenderer?.contents || [];
-    for (const item of items) {
-      const ch = item?.channelRenderer;
-      if (!ch) continue;
-      const channelId = ch?.channelId;
-      const title = ch?.title?.simpleText || ch?.title?.runs?.[0]?.text;
-      const thumb = ch?.thumbnail?.thumbnails?.slice(-1)?.[0]?.url;
-      const subs = ch?.subscriberCountText?.simpleText || ch?.subscriberCountText?.runs?.map(r => r.text).join('') || '';
-      const desc = ch?.descriptionSnippet?.runs?.map(r => r.text).join('') || '';
-
-      if (channelId && title) {
-        results.push({
-          channelId,
-          title,
-          thumbnail: thumb,
-          subscribers: subs,
-          description: desc
-        });
-      }
-    }
-  }
-  return results;
-}
-
 function toB64Url(str) {
   return Buffer.from(str, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/,'');
 }
@@ -136,7 +43,7 @@ async function resolveChannelId(input) {
   const direct = raw.match(/youtube\.com\/channel\/(UC[0-9A-Za-z_-]{20,})/i);
   if (direct) return direct[1];
 
-  // Try handles or vanity URLs by scraping the page (robust enough for MVP)
+  // Try handles or vanity URLs by scraping the page
   let url;
   if (raw.startsWith('@')) url = `https://www.youtube.com/${raw}`;
   else if (/youtube\.com\//i.test(raw)) url = raw;
@@ -158,28 +65,66 @@ async function fetchChannelRSS(channelId) {
   return parsed;
 }
 
+// Robust YouTube channel search (no API key)
+async function searchChannels(query) {
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQAg%253D%253D`; // channels only
+  const html = await axios.get(url, {
+    timeout: 12000,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Cookie': 'PREF=hl=en'
+    }
+  }).then(r => r.data);
+
+  // Try both shapes for ytInitialData
+  let m = html.match(/ytInitialData"\s*:\s*(\{.+?\})\s*[,<]/s);
+  if (!m) m = html.match(/var\s+ytInitialData\s*=\s*(\{.+?\})\s*;/s);
+  if (!m) return [];
+
+  let data;
+  try { data = JSON.parse(m[1]); } catch { return []; }
+
+  const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
+  const results = [];
+
+  for (const sec of sections) {
+    const items = sec?.itemSectionRenderer?.contents || [];
+    for (const item of items) {
+      const ch = item?.channelRenderer;
+      if (!ch) continue;
+      const channelId = ch?.channelId;
+      const title = ch?.title?.simpleText || ch?.title?.runs?.[0]?.text;
+      const thumb = ch?.thumbnail?.thumbnails?.slice(-1)?.[0]?.url;
+      const subs = ch?.subscriberCountText?.simpleText || (ch?.subscriberCountText?.runs || []).map(r => r.text).join('') || '';
+      const desc = (ch?.descriptionSnippet?.runs || []).map(r => r.text).join('') || '';
+      if (channelId && title) {
+        results.push({ channelId, title, thumbnail: thumb, subscribers: subs, description: desc });
+      }
+    }
+  }
+  return results;
+}
+
 // ---------- RSS API (for your frontend Configurator) ----------
 
-// GET /resolve?input=<url|@handle|UCid>
-// returns { channelId, title, thumbnail? }
-// Suggest channels for any freeform text (name, host, handle, etc.)
+// Suggestions for freeform text (name/host/handle/etc.)
 app.get('/suggest', async (req, res) => {
   const q = String(req.query.query || '').trim();
   if (!q) return res.status(400).json({ error: 'missing query' });
   try {
     const hits = await searchChannels(q);
-    // keep top 8
     res.json({ query: q, suggestions: hits.slice(0, 8) });
-  } catch (e) {
+  } catch {
     res.status(502).json({ error: 'search_failed' });
   }
 });
 
+// Resolve URL/@handle/UCid or fall back to suggestions
 app.get('/resolve', async (req, res) => {
   const input = String(req.query.input || '');
   if (!input) return res.status(400).json({ error: 'missing input' });
 
-  // Direct resolve first
   const channelId = await resolveChannelId(input);
   if (channelId) {
     try {
@@ -192,11 +137,10 @@ app.get('/resolve', async (req, res) => {
     }
   }
 
-  // Fall back: treat input as a name and search
+  // Fall back: search and return suggestions
   try {
     const hits = await searchChannels(input);
     if (hits.length) {
-      // don’t auto-pick; tell frontend to show suggestions
       return res.status(404).json({ error: 'ambiguous', suggestions: hits.slice(0, 8) });
     }
   } catch {}
@@ -204,17 +148,7 @@ app.get('/resolve', async (req, res) => {
   return res.status(404).json({ error: 'channel not found' });
 });
 
-
-    // Try to construct a thumbnail from the first entry
-    const firstThumb = feed?.feed?.entry?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url;
-    if (firstThumb) thumbnail = firstThumb;
-  } catch { /* ignore */ }
-
-  res.json({ channelId, title, thumbnail });
-});
-
-// GET /feed?channelId=UC...
-// returns { channelId, videos: [{ id,title,published,link,thumbnail }] }
+// Feed: latest videos via RSS
 app.get('/feed', async (req, res) => {
   const channelId = String(req.query.channelId || '');
   if (!/^UC[0-9A-Za-z_-]{20,}$/.test(channelId)) {
@@ -231,42 +165,34 @@ app.get('/feed', async (req, res) => {
       thumbnail: e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url
     }));
     res.json({ channelId, videos });
-  } catch (err) {
+  } catch {
     res.status(502).json({ error: 'rss_fetch_failed' });
   }
 });
 
 // ---------- Config → Install URLs ----------
-
 function publicBaseUrl(req) {
   const proto = req.headers['x-forwarded-proto'] || 'https';
   const host  = req.headers['x-forwarded-host']  || req.headers.host;
   return `${proto}://${host}`;
 }
 
-// POST /create-config  { channels: string[], lowQuota?: boolean }
-// returns { token, manifest_url, web_stremio_install }
 app.post('/create-config', (req, res) => {
   const body = req.body || {};
   const cfg = {
     channels: Array.isArray(body.channels) ? body.channels.slice(0, 100) : [],
-    lowQuota: body.lowQuota !== undefined ? !!body.lowQuota : true // default RSS low-quota
+    lowQuota: body.lowQuota !== undefined ? !!body.lowQuota : true
   };
   const token = encodeCfg(cfg);
   const base = publicBaseUrl(req);
   const manifest = `${base}/manifest.json?cfg=${token}`;
   const webStremio = `https://web.strem.io/#/addons/catalog?addonUrl=${encodeURIComponent(manifest)}`;
 
-  res.json({
-    token,
-    manifest_url: manifest,
-    web_stremio_install: webStremio
-  });
+  res.json({ token, manifest_url: manifest, web_stremio_install: webStremio });
 });
 
 // ---------- Stremio Addon (multi-tenant via cfg token) ----------
-
-const idCache = new Map(); // raw -> UC id
+const idCache = new Map();
 
 async function ensureChannelId(raw) {
   if (idCache.has(raw)) return idCache.get(raw);
@@ -291,10 +217,8 @@ function buildAddon({ channels = [], lowQuota = true }) {
 
   const builder = new addonBuilder(manifest);
 
-  // Catalog: list configured channels as "series"
   builder.defineCatalogHandler(async ({ type, id }) => {
     if (type !== 'series' || id !== 'youtube-user') return { metas: [] };
-
     const metas = await Promise.all(channels.map(async (raw) => {
       const channelId = await ensureChannelId(raw);
       const name = raw.startsWith('@') ? raw : (channelId ? `Channel ${channelId.slice(0,8)}…` : raw);
@@ -306,15 +230,13 @@ function buildAddon({ channels = [], lowQuota = true }) {
         posterShape: 'square'
       };
     }));
-
     return { metas };
   });
 
-  // Meta: show channel videos via RSS
   builder.defineMetaHandler(async ({ id }) => {
     if (!id.startsWith('ytc:')) return { meta: {} };
-    let key = id.slice(4);
-    let channelId = /^UC/.test(key) ? key : await ensureChannelId(key);
+    const key = id.slice(4);
+    const channelId = /^UC/.test(key) ? key : await ensureChannelId(key);
 
     let videos = [];
     if (lowQuota && channelId) {
@@ -329,21 +251,12 @@ function buildAddon({ channels = [], lowQuota = true }) {
           poster: e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url,
           background: e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url
         }));
-      } catch { /* show empty list if RSS fails */ }
+      } catch { /* ignore */ }
     }
 
-    return {
-      meta: {
-        id,
-        type: 'series',
-        name: `Channel ${channelId || key}`,
-        poster: 'https://i.imgur.com/PsWn3oM.png',
-        videos
-      }
-    };
+    return { meta: { id, type: 'series', name: `Channel ${channelId || key}`, poster: 'https://i.imgur.com/PsWn3oM.png', videos } };
   });
 
-  // Stream: hand back YouTube watch URL
   builder.defineStreamHandler(async ({ id }) => {
     if (!id.startsWith('ytv:')) return { streams: [] };
     const videoId = id.slice(4);
