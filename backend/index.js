@@ -19,7 +19,7 @@ app.get('/', (_req, res) => {
 
 // ---------- Helpers ----------
 function toB64Url(str) {
-  return Buffer.from(str, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/,'');
+  return Buffer.from(str, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 function fromB64Url(b64) {
   const fixed = b64.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(b64.length / 4) * 4, '=');
@@ -29,21 +29,16 @@ function encodeCfg(cfgObj) {
   return toB64Url(JSON.stringify(cfgObj));
 }
 function decodeCfg(token) {
-  try { return JSON.parse(fromB64Url(token)); }
-  catch { return null; }
+  try { return JSON.parse(fromB64Url(token)); } catch { return null; }
 }
 
 async function resolveChannelId(input) {
   const raw = String(input || '').trim();
-
-  // UC… provided
   if (/^UC[0-9A-Za-z_-]{20,}$/.test(raw)) return raw;
 
-  // /channel/UC… in URL
   const direct = raw.match(/youtube\.com\/channel\/(UC[0-9A-Za-z_-]{20,})/i);
   if (direct) return direct[1];
 
-  // Try handles or vanity URLs by scraping the page
   let url;
   if (raw.startsWith('@')) url = `https://www.youtube.com/${raw}`;
   else if (/youtube\.com\//i.test(raw)) url = raw;
@@ -53,7 +48,7 @@ async function resolveChannelId(input) {
     const html = await axios.get(url, { timeout: 8000 }).then(r => r.data);
     const m = html.match(/"channelId":"(UC[0-9A-Za-z_-]{20,})"/);
     if (m) return m[1];
-  } catch { /* noop */ }
+  } catch { /* ignore */ }
 
   return null;
 }
@@ -65,9 +60,8 @@ async function fetchChannelRSS(channelId) {
   return parsed;
 }
 
-// Robust YouTube channel search (no API key)
 async function searchChannels(query) {
-  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQAg%253D%253D`; // channels only
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=EgIQAg%253D%253D`;
   const html = await axios.get(url, {
     timeout: 12000,
     headers: {
@@ -77,7 +71,6 @@ async function searchChannels(query) {
     }
   }).then(r => r.data);
 
-  // Try both shapes for ytInitialData
   let m = html.match(/ytInitialData"\s*:\s*(\{.+?\})\s*[,<]/s);
   if (!m) m = html.match(/var\s+ytInitialData\s*=\s*(\{.+?\})\s*;/s);
   if (!m) return [];
@@ -87,28 +80,23 @@ async function searchChannels(query) {
 
   const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
   const results = [];
-
   for (const sec of sections) {
     const items = sec?.itemSectionRenderer?.contents || [];
     for (const item of items) {
       const ch = item?.channelRenderer;
       if (!ch) continue;
-      const channelId = ch?.channelId;
-      const title = ch?.title?.simpleText || ch?.title?.runs?.[0]?.text;
-      const thumb = ch?.thumbnail?.thumbnails?.slice(-1)?.[0]?.url;
-      const subs = ch?.subscriberCountText?.simpleText || (ch?.subscriberCountText?.runs || []).map(r => r.text).join('') || '';
-      const desc = (ch?.descriptionSnippet?.runs || []).map(r => r.text).join('') || '';
-      if (channelId && title) {
-        results.push({ channelId, title, thumbnail: thumb, subscribers: subs, description: desc });
-      }
+      const channelId = ch.channelId;
+      const title = ch.title?.simpleText || ch.title?.runs?.[0]?.text;
+      const thumb = ch.thumbnail?.thumbnails?.slice(-1)?.[0]?.url;
+      const subs = ch.subscriberCountText?.simpleText || (ch.subscriberCountText?.runs || []).map(r => r.text).join('') || '';
+      const desc = (ch.descriptionSnippet?.runs || []).map(r => r.text).join('') || '';
+      if (channelId && title) results.push({ channelId, title, thumbnail: thumb, subscribers: subs, description: desc });
     }
   }
   return results;
 }
 
-// ---------- RSS API (for your frontend Configurator) ----------
-
-// Suggestions for freeform text (name/host/handle/etc.)
+// ---------- Frontend helper API ----------
 app.get('/suggest', async (req, res) => {
   const q = String(req.query.query || '').trim();
   if (!q) return res.status(400).json({ error: 'missing query' });
@@ -120,7 +108,6 @@ app.get('/suggest', async (req, res) => {
   }
 });
 
-// Resolve URL/@handle/UCid or fall back to suggestions
 app.get('/resolve', async (req, res) => {
   const input = String(req.query.input || '');
   if (!input) return res.status(400).json({ error: 'missing input' });
@@ -129,31 +116,26 @@ app.get('/resolve', async (req, res) => {
   if (channelId) {
     try {
       const feed = await fetchChannelRSS(channelId);
-      const title = feed?.feed?.title?.[0] || `Channel ${channelId.slice(0,8)}…`;
+      const title = feed?.feed?.title?.[0] || `Channel ${channelId.slice(0, 8)}…`;
       const firstThumb = feed?.feed?.entry?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url;
       return res.json({ channelId, title, thumbnail: firstThumb });
     } catch {
-      return res.json({ channelId, title: `Channel ${channelId.slice(0,8)}…` });
+      return res.json({ channelId, title: `Channel ${channelId.slice(0, 8)}…` });
     }
   }
 
-  // Fall back: search and return suggestions
   try {
     const hits = await searchChannels(input);
-    if (hits.length) {
-      return res.status(404).json({ error: 'ambiguous', suggestions: hits.slice(0, 8) });
-    }
+    if (hits.length) return res.status(404).json({ error: 'ambiguous', suggestions: hits.slice(0, 8) });
   } catch {}
 
   return res.status(404).json({ error: 'channel not found' });
 });
 
-// Feed: latest videos via RSS
 app.get('/feed', async (req, res) => {
   const channelId = String(req.query.channelId || '');
-  if (!/^UC[0-9A-Za-z_-]{20,}$/.test(channelId)) {
-    return res.status(400).json({ error: 'invalid channelId' });
-  }
+  if (!/^UC[0-9A-Za-z_-]{20,}$/.test(channelId)) return res.status(400).json({ error: 'invalid channelId' });
+
   try {
     const feed = await fetchChannelRSS(channelId);
     const entries = feed?.feed?.entry || [];
@@ -173,11 +155,10 @@ app.get('/feed', async (req, res) => {
 // ---------- Config → Install URLs ----------
 function publicBaseUrl(req) {
   const proto = req.headers['x-forwarded-proto'] || 'https';
-  const host  = req.headers['x-forwarded-host']  || req.headers.host;
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
   return `${proto}://${host}`;
 }
 
-// backend/index.js
 app.post('/create-config', (req, res) => {
   const body = req.body || {};
   const cfg = {
@@ -186,28 +167,17 @@ app.post('/create-config', (req, res) => {
   };
 
   const token = encodeCfg(cfg);
-  const base  = publicBaseUrl(req);
+  const base = publicBaseUrl(req);
 
-  // Path-based manifest so the token survives all addon calls
   const manifest = `${base}/cfg/${token}/manifest.json`;
+  const webStremio = `https://web.stremio.com/#/addons?addon=${encodeURIComponent(manifest)}`;
+  const desktopDeep = `stremio://${manifest}`;
 
-  // ✅ Correct installer links
-  const webStremio   = `https://web.stremio.com/#/addons?addon=${encodeURIComponent(manifest)}`;
-  const desktopDeep  = `stremio://${manifest}`;
-
-  res.json({
-    token,
-    manifest_url: manifest,
-    web_stremio_install: webStremio,
-    desktop_stremio_install: desktopDeep
-  });
+  res.json({ token, manifest_url: manifest, web_stremio_install: webStremio, desktop_stremio_install: desktopDeep });
 });
 
-
-
-// ---------- Stremio Addon (multi-tenant via cfg token) ----------
+// ---------- Stremio Addon (logic we also reuse below) ----------
 const idCache = new Map();
-
 async function ensureChannelId(raw) {
   if (idCache.has(raw)) return idCache.get(raw);
   const id = await resolveChannelId(raw);
@@ -221,127 +191,15 @@ function buildAddon({ channels = [], lowQuota = true }) {
     version: '1.0.0',
     name: `YouTube Universe${lowQuota ? ' • Low-quota' : ''}`,
     description: `User-configured YouTube catalog${lowQuota ? ' • Low-quota mode (RSS)' : ''}`,
-    catalogs: [
-      { type: 'series', id: 'youtube-user', name: 'YouTube Channels', extra: [{ name: 'search', isRequired: false }] }
-    ],
+    catalogs: [{ type: 'series', id: 'youtube-user', name: 'YouTube Channels', extra: [{ name: 'search', isRequired: false }] }],
     resources: ['catalog', 'meta', 'stream'],
     types: ['series', 'movie'],
     idPrefixes: ['ytc:', 'ytv:']
   };
+  return new addonBuilder(manifest).getInterface();
+}
 
-  const builder = new addonBuilder(manifest);
-
-  // Catalog
-  builder.defineCatalogHandler(async ({ type, id }) => {
-  if (type !== 'series' || id !== 'youtube-user') return { metas: [] };
-
-  const metas = [];
-  for (const raw of channels) {
-    const channelId = await ensureChannelId(raw);
-    const safeKey = channelId || toB64Url(raw);
-
-    let title = raw;
-    let thumb = 'https://i.imgur.com/PsWn3oM.png';
-
-    // Try to pull channel title & avatar from RSS
-    try {
-      const feed = await fetchChannelRSS(channelId);
-      title = feed?.feed?.title?.[0] || title;
-      thumb =
-        feed?.feed?.entry?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url ||
-        thumb;
-    } catch { /* ignore errors */ }
-
-    metas.push({
-      id: `ytc:${safeKey}`,
-      type: 'series',
-      name: title,
-      poster: thumb,
-      posterShape: 'square',
-    });
-  }
-
-  return { metas };
-});
-
-
-  // Meta
-  builder.defineMetaHandler(async ({ id }) => {
-    if (!id.startsWith('ytc:')) return { meta: {} };
-
-    let key = id.slice(4);             // UC… or b64url(raw)
-    if (!/^UC/.test(key)) {
-      try { key = fromB64Url(key); } catch {}
-    }
-    const channelId = /^UC/.test(key) ? key : await ensureChannelId(key);
-
-    let videos = [];
-    if (lowQuota && channelId) {
-      try {
-        const feed = await fetchChannelRSS(channelId);
-        const entries = feed?.feed?.entry || [];
-        videos = entries.map(e => ({
-          id: `ytv:${e['yt:videoId']?.[0]}`,
-          type: 'movie',
-          name: e.title?.[0] || 'Video',
-          releaseInfo: e.published?.[0]?.slice(0,10),
-          poster: e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url,
-          background: e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url
-        }));
-      } catch { /* ignore */ }
-    }
-
-    return {
-      meta: {
-        id,
-        type: 'series',
-        name: `Channel ${channelId || key}`,
-        poster: 'https://i.imgur.com/PsWn3oM.png',
-        videos
-      }
-    };
-  });
-
-  // Stream stays the same
- builder.defineStreamHandler(async ({ id }) => {
-  if (!id.startsWith('ytv:')) return { streams: [] };
-  const videoId = id.slice(4);
-  return {
-    streams: [
-      {
-        name: 'YouTube',
-        title: 'Open on YouTube',
-        externalUrl: `https://www.youtube.com/watch?v=${videoId}`
-      }
-    ]
-  };
-});
-
-
-
-// Manifest
-// One router to rule them all: delegate everything under /cfg/:token to Stremio SDK
-
-
-app.get('/manifest.json', (req, res) => {
-  const token = String(req.query.cfg || '');
-  const cfg = token ? decodeCfg(token) : null;
-  if (!cfg) {
-    console.warn('manifest: invalid cfg', token.slice(0, 24));
-    return res.status(400).json({ error: 'invalid cfg' });
-  }
-  const addon = buildAddon(cfg);
-  // Be explicit: some proxies misbehave with res.json + compression
-  res.set('Content-Type', 'application/json; charset=utf-8');
-  res.set('Cache-Control', 'no-store');
-  res.send(JSON.stringify(addon.manifest));
-});
-app.get('/_cfg_debug', (req, res) => {
-  const token = String(req.query.cfg || '');
-  const cfg = token ? decodeCfg(token) : null;
-  res.json({ ok: !!cfg, cfg, tokenPreview: token.slice(0, 24) });
-});
-// Path-based manifest (token in path)
+// ---------- Manifest (path-based) ----------
 app.get('/cfg/:token/manifest.json', (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
@@ -354,34 +212,34 @@ app.get('/cfg/:token/manifest.json', (req, res) => {
 });
 
 // ---------- Explicit resource routes (no SDK HTTP delegation) ----------
-
-// CATALOG: /cfg/<token>/catalog/series/youtube-user.json
+// CATALOG
 app.get('/cfg/:token/catalog/:type/:id.json', async (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
   if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
 
   const { type, id } = req.params;
-  if (type !== 'series' || id !== 'youtube-user') {
-    return res.json({ metas: [] });
-  }
+  if (type !== 'series' || id !== 'youtube-user') return res.json({ metas: [] });
 
   try {
     const metas = await Promise.all((cfg.channels || []).slice(0, 100).map(async (raw) => {
       try {
-        const channelId = await ensureChannelId(raw);           // UC… or null
-        const safeKey   = channelId || toB64Url(raw);           // URL-safe id
-        const name      = String(raw).startsWith('@')
-          ? raw
-          : (channelId ? `Channel ${channelId.slice(0,8)}…` : String(raw));
+        const channelId = await ensureChannelId(raw);
+        const safeKey = channelId || toB64Url(raw);
 
-        return {
-          id: `ytc:${safeKey}`,
-          type: 'series',
-          name,
-          poster: 'https://i.imgur.com/PsWn3oM.png',
-          posterShape: 'square'
-        };
+        // Try to get a friendly name & thumbnail from RSS
+        let title = String(raw);
+        let thumb = 'https://i.imgur.com/PsWn3oM.png';
+        if (channelId) {
+          try {
+            const feed = await fetchChannelRSS(channelId);
+            title = feed?.feed?.title?.[0] || title;
+            const t = feed?.feed?.entry?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$?.url;
+            if (t) thumb = t;
+          } catch { /* ignore */ }
+        }
+
+        return { id: `ytc:${safeKey}`, type: 'series', name: title, poster: thumb, posterShape: 'square' };
       } catch (e) {
         console.error('catalog: skip raw=', raw, e);
         return null;
@@ -395,84 +253,92 @@ app.get('/cfg/:token/catalog/:type/:id.json', async (req, res) => {
   }
 });
 
-// META: /cfg/<token>/meta/series/ytc:<UC...|b64url>.json
+// META
 app.get('/cfg/:token/meta/:type/:id.json', async (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
   if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
 
   const { type } = req.params;
-  let id = String(req.params.id || '');
-
-  if (type !== 'series' || !id.startsWith('ytc:')) {
-    return res.json({ meta: {} });
-  }
+  const rawId = String(req.params.id || '');
+  if (type !== 'series' || !rawId.startsWith('ytc:')) return res.json({ meta: {} });
 
   try {
-    let key = id.slice(4); // UC… or b64url(raw)
+    let key = rawId.slice(4); // UC… or b64url(raw)
     if (!/^UC/.test(key)) {
       try { key = fromB64Url(key); } catch {}
     }
-    const channelId = /^UC/.test(key) ? key : (await ensureChannelId(key));
+    const channelId = /^UC/.test(key) ? key : await ensureChannelId(key);
+
+    // Default name/poster
+    let title = `Channel ${channelId || key}`;
+    let thumb = 'https://i.imgur.com/PsWn3oM.png';
 
     let videos = [];
     if (cfg.lowQuota !== false && channelId) {
       try {
         const feed = await fetchChannelRSS(channelId);
+        title = feed?.feed?.title?.[0] || title;
         const entries = feed?.feed?.entry || [];
         videos = entries.map(e => ({
           id: `ytv:${e['yt:videoId']?.[0]}`,
           type: 'movie',
           name: e.title?.[0] || 'Video',
-          releaseInfo: e.published?.[0]?.slice(0,10),
+          releaseInfo: e.published?.[0]?.slice(0, 10),
           poster: e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url,
           background: e['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url
         })).filter(v => v.id);
+        const t = entries?.[0]?.['media:group']?.[0]?.['media:thumbnail']?.[0]?.$.url;
+        if (t) thumb = t;
       } catch (e) {
         console.error('meta: rss fetch failed for', channelId, e);
       }
     }
 
     res.set('Content-Type', 'application/json; charset=utf-8');
-    res.json({
-      meta: {
-        id: `ytc:${channelId || key}`,
-        type: 'series',
-        name: `Channel ${channelId || key}`,
-        poster: 'https://i.imgur.com/PsWn3oM.png',
-        videos
-      }
-    });
+    res.json({ meta: { id: rawId, type: 'series', name: title, poster: thumb, videos } });
   } catch (e) {
     console.error('meta error:', e);
     res.status(500).json({ error: 'handler_error', detail: String(e) });
   }
 });
 
-// STREAM: /cfg/<token>/stream/movie/ytv:<videoId>.json
-app.get('/cfg/:token/stream/:type/:id.json', async (req, res) => {
+// STREAM
+app.get('/cfg/:token/stream/:type/:id.json', (req, res) => {
   const token = String(req.params.token || '');
   const cfg = token ? decodeCfg(token) : null;
   if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
 
   const { type } = req.params;
   const id = String(req.params.id || '');
-  if (type !== 'movie' || !id.startsWith('ytv:')) {
-    return res.json({ streams: [] });
-  }
+  if (type !== 'movie' || !id.startsWith('ytv:')) return res.json({ streams: [] });
 
-  try {
-    const videoId = id.slice(4);
-    const streams = videoId ? [{ title: 'Watch on YouTube', url: `https://www.youtube.com/watch?v=${videoId}` }] : [];
-    res.set('Content-Type', 'application/json; charset=utf-8');
-    res.json({ streams });
-  } catch (e) {
-    console.error('stream error:', e);
-    res.status(500).json({ error: 'handler_error', detail: String(e) });
-  }
+  const videoId = id.slice(4);
+  const streams = videoId ? [
+    // Open in browser (lightweight, ToS-friendly)
+    { name: 'YouTube', title: 'Open on YouTube', externalUrl: `https://www.youtube.com/watch?v=${videoId}` }
+  ] : [];
+
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  res.json({ streams });
 });
 
+// ---------- Optional debug ----------
+app.get('/manifest.json', (req, res) => {
+  const token = String(req.query.cfg || '');
+  const cfg = token ? decodeCfg(token) : null;
+  if (!cfg) return res.status(400).json({ error: 'invalid cfg' });
+  const addon = buildAddon(cfg);
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  res.set('Cache-Control', 'no-store');
+  res.send(JSON.stringify(addon.manifest));
+});
 
+app.get('/_cfg_debug', (req, res) => {
+  const token = String(req.query.cfg || '');
+  const cfg = token ? decodeCfg(token) : null;
+  res.json({ ok: !!cfg, cfg, tokenPreview: token.slice(0, 24) });
+});
 
 // ---------- Start ----------
 app.listen(PORT, () => {
