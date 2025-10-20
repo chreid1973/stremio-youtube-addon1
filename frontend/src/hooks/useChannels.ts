@@ -1,38 +1,8 @@
-// frontend/src/hooks/useChannels.ts
 import { useEffect, useState } from 'react';
-import type { Channel, RepoDetails } from '../types';
-import { getRepoDetails } from '../services/githubService';
+import type { Channel } from '../types';
 import { getChannelDetails } from '../services/youtubeService';
 
 const STORAGE_KEY = 'channels';
-
-function looksLikeYouTube(input: string) {
-  const s = input.trim();
-  return /(^@)|youtube\.com|youtu\.be/i.test(s);
-}
-
-function looksLikeGitHub(input: string) {
-  const s = input.trim();
-  return /github\.com\//i.test(s);
-}
-
-// Convert a minimal RepoDetails into a renderable Channel
-function repoToChannel(repo: RepoDetails): Channel {
-  const owner = repo.owner ? `${repo.owner}/` : '';
-  const name = repo.name ?? 'repository';
-  const url = repo.url ?? (owner ? `https://github.com/${owner}${name}` : `https://github.com/${name}`);
-  return {
-    id: repo.url ?? `${owner}${name}`,
-    type: 'github',
-    url,
-    name: `${owner}${name}`,
-    description: repo.description,
-    imageUrl: undefined,
-    // Optional fields your UI might read (kept loose)
-    // @ts-expect-error optional UI-only field
-    stars: repo.stars
-  };
-}
 
 export const useChannels = () => {
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -65,34 +35,18 @@ export const useChannels = () => {
     setError(null);
     try {
       const url = input.trim();
+      if (!url) throw new Error('Please enter a valid YouTube channel handle or URL.');
 
-      let newChannel: Channel | null = null;
+      const newChannel = await getChannelDetails(url);
+      if (!newChannel) throw new Error('Failed to retrieve channel details.');
 
-      if (looksLikeYouTube(url)) {
-        // Backend RSS path → already returns a Channel
-        newChannel = await getChannelDetails(url);
-      } else if (looksLikeGitHub(url)) {
-        // GitHub path → returns RepoDetails, convert it
-        const repo: RepoDetails | null = await getRepoDetails(url);
-        newChannel = repo ? repoToChannel(repo) : null;
-      } else {
-        throw new Error('Please enter a valid YouTube channel (@handle/URL) or GitHub repository URL.');
-      }
+      const exists = channels.some(c => c.id === newChannel.id);
+      if (exists) throw new Error('That channel is already in your list.');
 
-      if (!newChannel) {
-        throw new Error('Failed to retrieve details. Please check the URL and try again.');
-      }
-
-      // Deduplicate by (id + type)
-      const exists = channels.some(c => c.id === newChannel!.id && c.type === newChannel!.type);
-      if (exists) {
-        throw new Error('That item is already in your list.');
-      }
-
-      setChannels(prev => [newChannel!, ...prev]);
+      setChannels(prev => [newChannel, ...prev]);
       return true;
     } catch (err: any) {
-      setError(err?.message || 'An unexpected error occurred.');
+      setError(err.message || 'An unexpected error occurred.');
       return false;
     } finally {
       setLoading(false);
