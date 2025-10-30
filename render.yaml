@@ -3,7 +3,7 @@ services:
     name: stremio-youtube-backend
     env: node
     rootDir: backend
-    buildCommand: npm ci && npm start
+    buildCommand: npm ci
     startCommand: node index.js
     plan: free
     runtime: node

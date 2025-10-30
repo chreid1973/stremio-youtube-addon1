@@ -1,5 +1,6 @@
 import type { Channel } from '../types';
-const BACKEND_BASE = import.meta.env.VITE_BACKEND_BASE;
+const ENV_BASE = import.meta.env.VITE_BACKEND_BASE as string | undefined;
+const BACKEND_BASE = ENV_BASE && ENV_BASE.trim() ? ENV_BASE.trim() : window.location.origin;
 
 export type Suggestion = {
   channelId: string;
